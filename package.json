@@ -15,16 +15,20 @@
     "build": "npm run build -w @donarium/shared && npm run build -w @donarium/web && npm run build -w @donarium/api",
     "start": "npm run start -w @donarium/api",
     "typecheck": "npm run typecheck --workspaces --if-present && tsc -p tsconfig.scripts.json",
-    "test": "node --import tsx tests/api.test.ts && node --import tsx tests/postgres.integration.test.ts",
+    "test": "node --import tsx tests/api.test.ts && node --import tsx tests/auth.test.ts && node --import tsx tests/storage.test.ts && node --import tsx tests/transfer.test.ts && node --import tsx tests/postgres.integration.test.ts && node --import tsx tests/catalog.integration.test.ts && node --import tsx tests/storage.integration.test.ts && node --import tsx tests/portability.integration.test.ts && node --import tsx tests/portability-recovery.integration.test.ts",
     "test:e2e": "playwright test",
     "db:migrate": "tsx scripts/migrate.ts",
-    "db:seed": "tsx scripts/seed-demo.ts"
+    "db:seed": "tsx scripts/seed-demo.ts",
+    "test:integration": "node scripts/test-integration.mjs",
+    "backup": "node scripts/backup.mjs"
   },
   "devDependencies": {
+    "@playwright/test": "1.56.0",
     "@types/node": "^22.18.0",
     "@types/pg": "^8.15.5",
-    "typescript": "^5.9.3",
+    "@types/yauzl": "^3.4.0",
+    "@types/yazl": "^3.3.1",
     "tsx": "^4.20.6",
-    "@playwright/test": "1.56.0"
+    "typescript": "^5.9.3"
   }
 }

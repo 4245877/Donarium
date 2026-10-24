@@ -1,0 +1,11 @@
+# Copy to compose.storage.yml, edit source, and include with -f on EVERY up/build.
+# Also set STORAGE_ROOTS=[{"key":"MODELS","name":"Модели","path":"/library/models"}] in .env.
+services:
+  app:
+    volumes:
+      - type: bind
+        source: /mnt/your-model-library
+        target: /library/models
+        read_only: true
+        bind:
+          create_host_path: false

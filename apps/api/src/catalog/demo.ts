@@ -24,6 +24,7 @@ export const demoProducts: Product[] = fixtures.map((fixture, index) => {
   return {
     id,
     sku: `DN-${String(index + 1).padStart(3, '0')}`,
+    status: 'ready', coverAssetId: null,
     title: fixture.title,
     description: fixture.description,
     categories: [demoCategories[fixture.category]!],
@@ -48,10 +49,13 @@ export class DemoRepository implements CatalogRepository {
     const needle = query.q.toLocaleLowerCase('ru');
     const filtered = demoProducts.filter(product =>
       (!query.category || product.categories.some(category => category.slug === query.category)) &&
-      (!needle || [product.title, product.sku, product.description, ...product.tags].some(value => value.toLocaleLowerCase('ru').includes(needle))),
+      (!query.tag || product.tags.some(tag => tag.toLocaleLowerCase('ru') === query.tag?.toLocaleLowerCase('ru'))) &&
+      (!query.status || product.status === query.status) &&
+      (!needle || [product.title, product.sku ?? '', product.description, ...product.tags].some(value => value.toLocaleLowerCase('ru').includes(needle))),
     );
     filtered.sort(query.sort === 'title'
       ? (a, b) => a.title.localeCompare(b.title, 'ru') || a.id.localeCompare(b.id)
+      : query.sort === 'updated' ? (a, b) => b.updatedAt.localeCompare(a.updatedAt) || a.id.localeCompare(b.id)
       : (a, b) => b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id));
     const start = (query.page - 1) * query.pageSize;
     return { items: filtered.slice(start, start + query.pageSize).map(({ assets: _assets, sourceUrl: _sourceUrl, ...summary }) => summary), total: filtered.length };

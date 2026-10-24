@@ -1,5 +1,25 @@
-# Optional independent DONARIUM database. Never connects to SKUFnya's network.
+# Independent DONARIUM database. No SKUFnya network or credentials.
 services:
+  app:
+    depends_on:
+      db:
+        condition: service_healthy
+  maintenance:
+    profiles: [tools]
+    build:
+      context: .
+      target: maintenance
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env}
+      DB_MIGRATION_CONFIRM: ${DB_MIGRATION_CONFIRM:-}
+    depends_on:
+      db:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
   db:
     image: postgres:16
     restart: unless-stopped

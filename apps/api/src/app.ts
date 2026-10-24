@@ -9,6 +9,9 @@ import { createPool } from './db.js';
 import { DemoRepository } from './catalog/demo.js';
 import { PostgresRepository } from './catalog/postgres.js';
 import type { CatalogRepository } from './catalog/repository.js';
+import { registerAuth } from './auth.js';
+import { registerStorageRoutes } from './storage/routes.js';
+import { registerTransferRoutes } from './transfer/routes.js';
 import { registerCatalogRoutes } from './catalog/routes.js';
 
 export interface AppOptions {
@@ -39,6 +42,8 @@ export async function buildApp(options: AppOptions = {}): Promise<FastifyInstanc
     app.addHook('onClose', async () => { await pool!.end(); });
   }
 
+  await registerAuth(app, config);
+
   app.addHook('onSend', async (_request, reply) => {
     reply.header('X-Content-Type-Options', 'nosniff');
     reply.header('X-Frame-Options', 'DENY');
@@ -50,8 +55,10 @@ export async function buildApp(options: AppOptions = {}): Promise<FastifyInstanc
     if (error.validation) {
       return reply.code(400).send({ error: { code: 'VALIDATION_ERROR', message: 'Проверьте параметры запроса', requestId: request.id } });
     }
+    if ('code' in error && error.code === '23505') return reply.code(409).send({ error: { code: 'CONFLICT', message: 'Такая запись или SKU уже существует', requestId: request.id } });
+    if ('code' in error && ['23503', '23514', '22P02'].includes(error.code ?? '')) return reply.code(400).send({ error: { code: 'INVALID_REFERENCE', message: 'Проверьте поля и связанные записи', requestId: request.id } });
     if (error.statusCode && error.statusCode >= 400 && error.statusCode < 500) {
-      return reply.code(error.statusCode).send({ error: { code: 'BAD_REQUEST', message: 'Некорректный запрос', requestId: request.id } });
+      return reply.code(error.statusCode).send({ error: { code: 'BAD_REQUEST', message: error.name === 'StorageError' || error.constructor.name === 'StorageError' || error.constructor.name === 'CatalogInputError' || error.constructor.name === 'TransferError' ? error.message : 'Некорректный запрос', requestId: request.id } });
     }
     // Do not serialize DB errors, URLs, credentials or filesystem paths to logs/responses.
     request.log.error({ requestId: request.id }, 'Request failed');
@@ -70,13 +77,18 @@ export async function buildApp(options: AppOptions = {}): Promise<FastifyInstanc
   });
   app.get('/api/v1/system', async () => {
     const response: SystemResponse = {
-      name: 'DONARIUM', version: APP_VERSION, mode: config.dataMode, readOnly: true,
-      storage: config.dataMode === 'demo' ? 'demo-metadata' : config.externalStorageBaseUrl ? 'external-links' : config.storageRoot ? 'local-configured' : 'not-configured',
-      features: { catalog: true, search: true, uploads: false, import: false, export: false },
+      name: 'DONARIUM', version: APP_VERSION, mode: config.dataMode, readOnly: config.dataMode !== 'postgres' || !config.adminPassword,
+      storage: config.dataMode === 'demo' ? 'demo-metadata' : (config.managedRoot || config.storageRoots?.length || config.storageRoot) ? 'local-configured' : 'not-configured',
+      features: { catalog: true, search: true, uploads: config.dataMode === 'postgres', import: config.dataMode === 'postgres', export: config.dataMode === 'postgres' },
     };
     return response;
   });
   await registerCatalogRoutes(app, repository, config.dataMode);
+
+  if (pool && config.dataMode === 'postgres') {
+    await registerStorageRoutes(app, pool, repository, config);
+    await registerTransferRoutes(app, pool, config);
+  }
 
   const hasFrontend = existsSync(join(config.staticDir, 'index.html'));
   if (hasFrontend) {
@@ -94,10 +106,11 @@ export async function buildApp(options: AppOptions = {}): Promise<FastifyInstanc
     app.get('/', sendApp);
     app.get('/catalog', sendApp);
     app.get('/system', sendApp);
-    app.get('/favorites', sendApp);
-    app.get('/collections', sendApp);
+    app.get('/import', sendApp);
+    app.get('/transfer', sendApp);
+    app.get('/catalog/new', sendApp);
     app.get('/settings', sendApp);
-    app.get('/activity', sendApp);
+    app.get('/catalog/:id/edit', sendApp);
     app.get<{ Params: { id: string } }>('/catalog/:id', {
       schema: { params: { type: 'object', required: ['id'], properties: { id: { type: 'string', format: 'uuid' } } } },
     }, async (_request, reply) => reply.header('Cache-Control', 'no-cache').sendFile('index.html'));

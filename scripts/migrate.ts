@@ -24,6 +24,16 @@ async function migrate(): Promise<void> {
           console.log(`Already applied: ${name}`);
           continue;
         }
+        if (name === '002_library.sql') {
+          // Existing duplicate links are owner data. Stop for review rather than silently deleting them.
+          const duplicates = await client.query<{ groups: string }>(`SELECT count(*)::text AS groups FROM (
+            SELECT 1 FROM assets WHERE storage_id IS NOT NULL
+            GROUP BY product_id, storage_id, relative_path HAVING count(*) > 1
+          ) AS duplicate_links`);
+          if (Number(duplicates.rows[0]?.groups ?? 0) > 0) {
+            throw new Error(`Migration ${name} requires review of ${duplicates.rows[0]!.groups} duplicate asset-link groups. No links were removed. See docs/BACKUP.md before retrying.`);
+          }
+        }
         await client.query('BEGIN');
         try {
           await client.query(sql);

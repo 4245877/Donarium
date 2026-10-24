@@ -10,13 +10,30 @@ services:
       HOST: 0.0.0.0
       PORT: 4180
       NODE_ENV: production
-      DATA_MODE: ${DATA_MODE:-demo}
+      DATA_MODE: ${DATA_MODE:-postgres}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       DATABASE_URL: ${DATABASE_URL:-}
-      EXTERNAL_STORAGE_BASE_URL: ${EXTERNAL_STORAGE_BASE_URL:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      SECURE_COOKIE: ${SECURE_COOKIE:-false}
+      STORAGE_ROOTS: ${STORAGE_ROOTS:-[]}
+      MANAGED_STORAGE_ROOT: /app/var/uploads
+      WORK_ROOT: /app/var/work
+      MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-21474836480}
+      MAX_ARCHIVE_BYTES: ${MAX_ARCHIVE_BYTES:-2199023255552}
+    volumes:
+      - type: bind
+        source: ${MANAGED_STORAGE_ROOT:-./var/uploads}
+        target: /app/var/uploads
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${WORK_ROOT:-./var/work}
+        target: /app/var/work
+        bind:
+          create_host_path: false
     read_only: true
     tmpfs:
-      - /tmp:size=32m,mode=1777
+      - /tmp:size=64m,mode=1777
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     logging:

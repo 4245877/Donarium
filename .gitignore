@@ -11,3 +11,5 @@ var/
 backups/
 *.dump
 .DS_Store
+
+compose.storage.yml

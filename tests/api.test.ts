@@ -83,7 +83,7 @@ test('SPA routes work and unknown API, missing assets and write operations are n
     assert.equal(response.json().error.code, 'NOT_FOUND');
   }
   const write = await app.inject({ method: 'POST', url: '/api/v1/products', payload: { title: 'Unwanted' } });
-  assert.equal(write.statusCode, 404);
+  assert.equal(write.statusCode, 403);
   assert.equal((await get('/api/v1/products')).json().total, 6);
 });
 

@@ -83,13 +83,14 @@ test('PostgreSQL: unsafe paths rejected and bigint metadata preserved', { skip: 
 test('PostgreSQL: real API health and frontend catalogue contract', { skip: !testUrl }, async () => {
   const app = await buildApp({ pool, logger: false, config: {
     host: '127.0.0.1', port: 4180, dataMode: 'postgres', databaseUrl: testUrl,
-    logLevel: 'silent', staticDir: '/tmp/donarium-integration-no-static',
+    adminPassword: 'postgres-integration-password', logLevel: 'silent', staticDir: '/tmp/donarium-integration-no-static',
   } });
   try {
     const health = await app.inject('/health');
     assert.equal(health.statusCode, 200);
     assert.equal(health.json().database, 'connected');
-    const catalog = await app.inject('/api/v1/products?q=DN-001');
+    const login = await app.inject({ method: 'POST', url: '/api/v1/auth/login', payload: { password: 'postgres-integration-password' } });
+    const catalog = await app.inject({ url: '/api/v1/products?q=DN-001', headers: { cookie: String(login.headers['set-cookie']).split(';')[0]! } });
     assert.equal(catalog.statusCode, 200);
     assert.equal(catalog.json().mode, 'postgres');
     assert.equal(catalog.json().items[0].sku, 'DN-001');

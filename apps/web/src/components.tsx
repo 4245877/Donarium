@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
-import { AlertCircle, ArrowRight, Box, File, LoaderCircle, RotateCw } from 'lucide-react';
+import { AlertCircle, ArrowRight, Box, File, RotateCw } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import type { ProductSummary } from '@donarium/shared';
-export function Loading({ label = 'Загружаем библиотеку…' }: { label?: string }) { return <div className="state-panel" role="status"><LoaderCircle className="spin" size={25} /><p>{label}</p></div>; }
+import { Butterfly } from './App';
+export function Loading({ label = 'Загружаем библиотеку…' }: { label?: string }) { return <div className="state-panel" role="status"><Butterfly className="loading-butterfly" /><p>{label}</p></div>; }
 export function ErrorState({ message, retry }: { message: string; retry: () => void }) { return <div className="state-panel error-state" role="alert"><AlertCircle size={27} /><h3>Не удалось получить данные</h3><p>{message}</p><button className="button secondary" onClick={retry}><RotateCw size={15} />Повторить</button></div>; }
 export function ProductCard({ item, index = 0, demo = false }: { item: ProductSummary; index?: number; demo?: boolean }) {
   return <article className="product-card"><Link className="product-card-link" to={`/catalog/${item.id}`}><div className={`product-art art-tone-${index % 3}`}><span className="art-coordinate">{String(index + 1).padStart(2, '0')} / DONARIUM</span>{item.image ? <PreviewImage url={item.image.url} alt={item.image.alt} lazy /> : <Box className="image-placeholder" size={80} strokeWidth={0.7} />}<span className="art-label">{demo ? 'ДЕМО · ИЛЛЮСТРАЦИЯ' : 'ПРЕВЬЮ'}</span><span className="open-product" aria-hidden="true"><ArrowRight size={17} /></span></div><div className="product-info"><span className="product-category">{item.categories[0]?.name || 'Без категории'}</span><h3>{item.title}</h3><div className="product-meta"><span className="mono">{item.sku || 'Без SKU'}</span><span><File size={12} />{item.assetCount} {fileLabel(item.assetCount)}</span></div></div></Link></article>;

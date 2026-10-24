@@ -101,6 +101,9 @@ test('real files folder import archive export and restore through the interface'
   expect(await json.failure()).toBeNull();
   const [csv]=await Promise.all([page.waitForEvent('download'),page.getByRole('link',{name:'CSV',exact:true}).click()]);
   expect(await csv.failure()).toBeNull();
+  const beforeRestore = await page.request.get('/api/v1/products?pageSize=1');
+  const originalTotal = (await beforeRestore.json()).total as number;
+  expect(originalTotal).toBeGreaterThan(0);
   await page.getByRole('button',{name:'Подготовить полный архив'}).click();
   await expect(page.getByRole('link',{name:'Скачать полный архив'})).toBeVisible({timeout:30000});
   const [archive]=await Promise.all([page.waitForEvent('download'),page.getByRole('link',{name:'Скачать полный архив'}).click()]);
@@ -114,7 +117,8 @@ test('real files folder import archive export and restore through the interface'
   await page.getByRole('button',{name:'Подтвердить восстановление'}).click();
   await expect(page.getByText('Восстановление завершено.',{exact:true})).toBeVisible({timeout:30000});
   await page.goto('/catalog');
-  await expect(page.locator('.product-card')).toHaveCount(4);
+  await expect(page.locator('.product-card')).toHaveCount(originalTotal * 2);
+  await page.locator('.product-grid').evaluate(element=>element.getAnimations({subtree:true}).forEach(animation=>animation.finish()));
   await page.screenshot({path:'var/qa/library-desktop.png',fullPage:true});
   await page.setViewportSize({width:390,height:844});
   await page.locator('.sidebar').evaluate(element=>element.getAnimations().forEach(animation=>animation.finish()));

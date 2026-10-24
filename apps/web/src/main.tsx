@@ -4,8 +4,8 @@ import { BrowserRouter } from 'react-router-dom';
 import App from './App';
 import { followPointer } from './ambience';
 import './styles.css';
+import './theme';
 
-document.documentElement.dataset.theme = 'dark';
 followPointer();
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode><BrowserRouter><App /></BrowserRouter></React.StrictMode>,

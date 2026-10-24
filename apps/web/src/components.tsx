@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
-import { AlertCircle, ArrowRight, Box, File, RotateCw } from 'lucide-react';
+import { AlertCircle, ArrowRight, Box, File, Moon, RotateCw, Sun } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import type { ProductSummary } from '@donarium/shared';
 import { Butterfly } from './App';
+import { setTheme, useTheme } from './theme';
 export function Loading({ label = 'Загружаем библиотеку…' }: { label?: string }) { return <div className="state-panel" role="status"><Butterfly className="loading-butterfly" /><p>{label}</p></div>; }
 export function ErrorState({ message, retry }: { message: string; retry: () => void }) { return <div className="state-panel error-state" role="alert"><AlertCircle size={27} /><h3>Не удалось получить данные</h3><p>{message}</p><button className="button secondary" onClick={retry}><RotateCw size={15} />Повторить</button></div>; }
 export function ProductCard({ item, index = 0, demo = false }: { item: ProductSummary; index?: number; demo?: boolean }) {
@@ -10,6 +11,8 @@ export function ProductCard({ item, index = 0, demo = false }: { item: ProductSu
 }
 export function fileLabel(count: number) { const last = count % 10; const teen = count % 100; return last === 1 && teen !== 11 ? 'файл' : last >= 2 && last <= 4 && (teen < 12 || teen > 14) ? 'файла' : 'файлов'; }
 export function formatSize(value: string | number | null) { if (value === null) return 'Размер не указан'; const bytes = Number(value); if (!Number.isFinite(bytes) || bytes < 0) return 'Размер не указан'; if (bytes < 1024) return `${bytes} Б`; if (bytes < 1024 ** 2) return `${(bytes / 1024).toLocaleString('ru-RU', { maximumFractionDigits: 1 })} КБ`; if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toLocaleString('ru-RU', { maximumFractionDigits: 1 })} МБ`; return `${(bytes / 1024 ** 3).toLocaleString('ru-RU', { maximumFractionDigits: 1 })} ГБ`; }
+/** Day or night in the sanctuary: «Фарфоровое Чаепитие» or «Полуночное Святилище». */
+export function ThemeSwitch() { const dark = useTheme() === 'dark'; return <button type="button" className="theme-switch" role="switch" aria-checked={dark} aria-label="Тёмная тема" title={dark ? 'Полуночное Святилище — включить светлую тему' : 'Фарфоровое Чаепитие — включить тёмную тему'} onClick={() => setTheme(dark ? 'light' : 'dark')}><span className="theme-switch-thumb" aria-hidden="true" /><Sun className="theme-sun" size={15} strokeWidth={1.8} aria-hidden="true" /><Moon className="theme-moon" size={14} strokeWidth={1.8} aria-hidden="true" /></button>; }
 export function DemoNotice() { return <div className="demo-notice"><span className="demo-dot" /><span>Демонстрационная библиотека</span><span className="notice-divider">/</span><span className="muted">Только просмотр · оригинальные файлы не подключены</span></div>; }
 
 export function PreviewImage({url,alt,lazy=false,size=80}:{url:string;alt:string;lazy?:boolean;size?:number}) { const [failed,setFailed]=useState(false); useEffect(()=>setFailed(false),[url]); return failed ? <Box className="image-placeholder" size={size} role="img" aria-label={`${alt}: изображение недоступно`} /> : <img src={url} alt={alt} loading={lazy?"lazy":undefined} onError={()=>setFailed(true)} />; }

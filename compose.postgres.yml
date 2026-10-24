@@ -1,0 +1,21 @@
+# Optional independent DONARIUM database. Never connects to SKUFnya's network.
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: donarium
+      POSTGRES_USER: donarium
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set a new POSTGRES_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:5548:5432"
+    volumes:
+      - donarium_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U donarium -d donarium"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    security_opt: [no-new-privileges:true]
+volumes:
+  donarium_postgres:

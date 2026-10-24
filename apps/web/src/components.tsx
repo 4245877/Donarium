@@ -1,0 +1,50 @@
+import { AlertCircle, ArrowRight, Box, File, LoaderCircle, RotateCw, Star } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import type { ProductSummary } from '@donarium/shared';
+import { useWorkspace } from './workspace';
+
+export function Loading({ label = 'Загружаем библиотеку…' }: { label?: string }) {
+  return <div className="state-panel" role="status"><LoaderCircle className="spin" size={25} /><p>{label}</p></div>;
+}
+
+export function ErrorState({ message, retry }: { message: string; retry: () => void }) {
+  return <div className="state-panel error-state" role="alert"><AlertCircle size={27} /><h3>Не удалось получить данные</h3><p>{message}</p><button className="button secondary" onClick={retry}><RotateCw size={15} /> Повторить</button></div>;
+}
+
+export function ProductCard({ item, index = 0, demo = false }: { item: ProductSummary; index?: number; demo?: boolean }) {
+  const { favorites, toggleFavorite } = useWorkspace();
+  const favorite = favorites.includes(item.id);
+  return <article className="product-card"><Link className="product-card-link" to={`/catalog/${item.id}`}>
+    <div className={`product-art art-tone-${index % 3}`}>
+      <span className="art-coordinate">{String(index + 1).padStart(2, '0')} / OBJECT</span>
+      {item.image ? <img src={item.image.url} alt={item.image.alt} loading="lazy" /> : <Box className="image-placeholder" size={80} strokeWidth={0.7} />}
+      <span className="art-label">{demo ? 'ДЕМО · ИЛЛЮСТРАЦИЯ' : 'ПРЕВЬЮ'}</span>
+      <span className="open-product" aria-hidden="true"><ArrowRight size={17} /></span>
+    </div>
+    <div className="product-info">
+      <span className="product-category">{item.categories[0]?.name || 'Без категории'}</span>
+      <h3>{item.title}</h3>
+      <div className="product-meta"><span className="mono">{item.sku}</span><span><File size={12} />{item.assetCount} {fileLabel(item.assetCount)}</span></div>
+    </div>
+  </Link><button className={`card-favorite ${favorite ? 'is-favorite' : ''}`} onClick={() => toggleFavorite(item.id)} aria-label={`${favorite ? 'Убрать из избранного' : 'В избранное'}: ${item.title}`} aria-pressed={favorite}><Star size={15} /></button></article>;
+}
+
+export function fileLabel(count: number) {
+  const last = count % 10;
+  const teen = count % 100;
+  return last === 1 && teen !== 11 ? 'файл' : last >= 2 && last <= 4 && (teen < 12 || teen > 14) ? 'файла' : 'файлов';
+}
+
+export function formatSize(value: string | null) {
+  if (value === null) return 'Размер не указан';
+  const bytes = Number(value);
+  if (!Number.isFinite(bytes) || bytes < 0) return 'Размер не указан';
+  if (bytes < 1024) return `${bytes} Б`;
+  if (bytes < 1024 ** 2) return `${(bytes / 1024).toLocaleString('ru-RU', { maximumFractionDigits: 1 })} КБ`;
+  if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toLocaleString('ru-RU', { maximumFractionDigits: 1 })} МБ`;
+  return `${(bytes / 1024 ** 3).toLocaleString('ru-RU', { maximumFractionDigits: 1 })} ГБ`;
+}
+
+export function DemoNotice() {
+  return <div className="demo-notice"><span className="demo-dot" /><span>Демонстрационная библиотека</span><span className="notice-divider">/</span><span className="muted">Только просмотр · оригинальные файлы не подключены</span></div>;
+}

@@ -1,0 +1,30 @@
+{
+  "name": "donarium",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "engines": {
+    "node": "^22.12.0 || >=24.0.0"
+  },
+  "scripts": {
+    "dev": "npm run build -w @donarium/shared && node scripts/dev.mjs",
+    "build": "npm run build -w @donarium/shared && npm run build -w @donarium/web && npm run build -w @donarium/api",
+    "start": "npm run start -w @donarium/api",
+    "typecheck": "npm run typecheck --workspaces --if-present && tsc -p tsconfig.scripts.json",
+    "test": "node --import tsx tests/api.test.ts && node --import tsx tests/postgres.integration.test.ts",
+    "test:e2e": "playwright test",
+    "db:migrate": "tsx scripts/migrate.ts",
+    "db:seed": "tsx scripts/seed-demo.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.18.0",
+    "@types/pg": "^8.15.5",
+    "typescript": "^5.9.3",
+    "tsx": "^4.20.6",
+    "@playwright/test": "1.56.0"
+  }
+}

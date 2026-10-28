@@ -7,6 +7,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { Transform, type Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import type { Config, StorageGuard } from '../config.js';
+import { isFigureFileName, type StorageEntry } from '@donarium/shared';
 
 export interface StorageRoot { key: string; name: string; path: string; writable?: boolean; internal?: boolean }
 export interface StorageSettings {
@@ -172,12 +173,12 @@ export class StorageService {
     } finally {stream.destroy();await file.handle.close().catch(()=>undefined);}
   }
 
-  async browse(key: string, path = '', page = 1, pageSize = 100) {
+  async browse(key: string, path = '', page = 1, pageSize = 100, figuresOnly = false) {
     const directory = await this.open(key, path, true);
     try {
       const entries = await readdir(process.platform === 'linux' ? `/proc/self/fd/${directory.handle.fd}` : directory.path, { withFileTypes: true });
       if (entries.length > 100_000) throw new StorageError('В папке более 100000 элементов; выберите вложенную папку');
-      const supported = entries.filter(entry => !entry.name.startsWith('.') && (entry.isDirectory() || entry.isFile()));
+      const supported = entries.filter(entry => !entry.name.startsWith('.') && (entry.isDirectory() || entry.isFile() && (!figuresOnly || isFigureFileName(entry.name))));
       supported.sort((a, b) => Number(b.isDirectory()) - Number(a.isDirectory()) || a.name.localeCompare(b.name));
       const selected = supported.slice((page - 1) * pageSize, page * pageSize);
       const result = [];
@@ -192,6 +193,47 @@ export class StorageService {
       }
       return { root: key, path, entries: result, page, pageSize, total: supported.length };
     } finally { await directory.handle.close(); }
+  }
+  /** Search the live mounted filesystem, including files not yet in the registry.
+   * Work and results are bounded; no files are read, copied or indexed on disk. */
+  async searchFigures(key: string, path: string, query: string, cancelled: () => boolean = () => false) {
+    if (this.root(key).internal) throw new StorageError('Хранилище не разрешено', 403);
+    const needle = query.trim().normalize('NFC').toLocaleLowerCase('ru');
+    if (needle.length < 2) throw new StorageError('Введите хотя бы два символа для поиска');
+    const pending = [path], entries: StorageEntry[] = [];
+    const started = Date.now(); let visited = 0, skipped = 0, truncated = false;
+    while (pending.length) {
+      if (cancelled() || visited >= 10000 || Date.now() - started > 5000 || entries.length >= 200) { truncated = true; break; }
+      const current = pending.pop()!;
+      let directory;
+      try { directory = await this.open(key, current, true); }
+      catch (error) { if (current === path) throw error; skipped++; continue; }
+      try {
+        const children = await readdir(process.platform === 'linux' ? `/proc/self/fd/${directory.handle.fd}` : directory.path, { withFileTypes: true });
+        children.sort((a,b) => a.name.localeCompare(b.name));
+        for (const entry of children) {
+          if (++visited > 10000 || cancelled() || Date.now() - started > 5000 || entries.length >= 200) { truncated = true; break; }
+          if (entry.name.startsWith('.')) continue;
+          const child = current ? `${current}/${entry.name}` : entry.name;
+          try { safeRelativePath(child); } catch { skipped++; continue; }
+          if (entry.isDirectory()) {
+            if (child.split('/').length < 31) pending.push(child);
+            else truncated = true;
+          }
+          if (entry.isFile() && isFigureFileName(entry.name) && child.normalize('NFC').toLocaleLowerCase('ru').includes(needle)) {
+            try {
+              const file = await this.open(key, child);
+              entries.push({ name: entry.name, path: child, type: 'file', sizeBytes: String(file.stat.size) });
+              await file.handle.close();
+            } catch { skipped++; }
+          }
+        }
+      } catch (error) { if (current === path) throw normalizeFsError(error); skipped++; }
+      finally { await directory.handle.close(); }
+      if (truncated) break;
+    }
+    entries.sort((a,b) => a.path.localeCompare(b.path));
+    return { root: key, path, entries, truncated, skipped, visited };
   }
   async stageUpload(source: Readable, name: string, uploadId = randomUUID()) {
     safeFileName(name);

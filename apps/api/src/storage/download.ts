@@ -4,8 +4,9 @@ import { StorageError, StorageService, fileMetadata } from './service.js';
 export function disposition(name:string,inline=false) {
   return `${inline?'inline':'attachment'}; filename="download${extname(name).replace(/[^a-zA-Z0-9.]/g,'')}"; filename*=UTF-8''${encodeURIComponent(name).replace(/['()*]/g,char=>`%${char.charCodeAt(0).toString(16)}`)}`;
 }
-export async function sendPhysical(service:StorageService,key:string,path:string,name:string,request:FastifyRequest,reply:FastifyReply,options:{inline?:boolean;size?:string|null;sha256?:string|null}={}) {
+export async function sendPhysical(service:StorageService,key:string,path:string,name:string,request:FastifyRequest,reply:FastifyReply,options:{inline?:boolean;size?:string|null;sha256?:string|null;maxBytes?:number}={}) {
   const file=await service.open(key,path),size=file.stat.size;
+  if(options.maxBytes!==undefined&&size>options.maxBytes){await file.handle.close();throw new StorageError('Файл слишком велик для встроенного просмотра; скачайте его для открытия в 3D-программе',413);}
   if(options.size!=null&&String(size)!==options.size){await file.handle.close();throw new StorageError('Размер файла изменился; выполните проверку целостности',409);}
   const etag=options.sha256?`"${options.sha256}"`:undefined;
   if(etag)reply.header('ETag',etag);

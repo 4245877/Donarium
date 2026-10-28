@@ -11,6 +11,7 @@ import { fileMetadata, safeFileName, StorageError, StorageService } from './serv
 
 import { registerRegistryRoutes } from './registry-routes.js';
 import { disposition, sendPhysical } from './download.js';
+import { figureFileInfo } from './figure.js';
 const uuid = { type: 'string', format: 'uuid' };
 const productParams = { type: 'object', required: ['id'], properties: { id: uuid } };
 const rootPath = { root: { type: 'string', maxLength: 64 }, path: { type: 'string', maxLength: 4096, default: '' } };
@@ -32,11 +33,28 @@ export async function registerStorageRoutes(app: FastifyInstance, pool: Pool, re
     if (!(await pool.query('SELECT id FROM products WHERE id=$1', [id])).rowCount) throw new StorageError('Карточка не найдена', 404);
   };
   app.get('/api/v1/storage/roots', async () => ({ roots: service.listRoots(), inventoryAvailable: service.roots.some(root=>root.key==='INVENTORY') }));
-  app.get<{ Querystring: { root: string; path: string; page: number; pageSize: number } }>('/api/v1/storage/browse', {
+  app.get<{ Querystring: { root: string; path: string; page: number; pageSize: number; figuresOnly: boolean } }>('/api/v1/storage/browse', {
     schema: { querystring: { type: 'object', additionalProperties: false, required: ['root'], properties: {
-      ...rootPath, page: { type: 'integer', minimum: 1, maximum: 100000, default: 1 }, pageSize: { type: 'integer', minimum: 1, maximum: 200, default: 100 },
+      ...rootPath, figuresOnly: { type: 'boolean', default: false }, page: { type: 'integer', minimum: 1, maximum: 100000, default: 1 }, pageSize: { type: 'integer', minimum: 1, maximum: 200, default: 100 },
     } } },
-  }, request => service.browse(request.query.root, request.query.path, request.query.page, request.query.pageSize));
+  }, request => {
+    if (service.root(request.query.root).internal) throw new StorageError('Хранилище не разрешено', 403);
+    return service.browse(request.query.root, request.query.path, request.query.page, request.query.pageSize, request.query.figuresOnly);
+  });
+  app.get<{ Querystring: { root: string; path: string; q: string } }>('/api/v1/storage/figure-search', {
+    schema: { querystring: { type: 'object', additionalProperties: false, required: ['root', 'q'], properties: { ...rootPath, q: { type: 'string', minLength: 2, maxLength: 200 } } } },
+  }, request => service.searchFigures(request.query.root, request.query.path, request.query.q, () => request.raw.aborted));
+  const figureQuery = { type: 'object', additionalProperties: false, required: ['root', 'path'], properties: rootPath };
+  app.get<{ Querystring: { root: string; path: string } }>('/api/v1/storage/figure-file', {
+    schema: { querystring: figureQuery },
+  }, request => figureFileInfo(service, request.query));
+  for (const action of ['download', 'preview'] as const) app.get<{ Querystring: { root: string; path: string } }>(`/api/v1/storage/figure-file/${action}`, {
+    schema: { querystring: figureQuery },
+  }, async (request, reply) => {
+    const info = await figureFileInfo(service, request.query);
+    if (action === 'preview' && info.format !== 'stl') throw new StorageError('Встроенный 3D-просмотр доступен для STL');
+    return sendPhysical(service, info.root, info.path, info.name, request, reply, { size: info.sizeBytes, ...(action === 'preview' ? { maxBytes: 32 * 1024 ** 2 } : {}) });
+  });
   app.post<{ Params: { id: string }; Body: { root: string; paths: string[]; recursive?: boolean } }>('/api/v1/products/:id/assets/link', {
     bodyLimit: 2 * 1024 * 1024,
     schema: { params: productParams, body: { type: 'object', additionalProperties: false, required: ['root', 'paths'], properties: {

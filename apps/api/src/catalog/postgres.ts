@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import type { Pool, PoolClient, QueryResultRow } from 'pg';
 import type { Asset, CatalogQuery, Category, CategoryInput, Product, ProductInput, ProductStatus, ProductSummary } from '@donarium/shared';
 import type { CatalogRepository } from './repository.js';
+import type { StorageService } from '../storage/service.js';
+import { saveFigureFile } from '../storage/figure.js';
 
 interface ProductRow extends QueryResultRow {
   id: string; sku: string | null; title: string; description: string; status: ProductStatus; cover_asset_id: string | null;
@@ -35,7 +37,7 @@ export class CatalogInputError extends Error {
 
 /** Pool connections make each metadata edit atomic. A supplied client remains caller-owned. */
 export class PostgresRepository implements CatalogRepository {
-  constructor(private readonly pool: Pool | Pick<PoolClient, 'query' | 'release'>) {}
+  constructor(private readonly pool: Pool | Pick<PoolClient, 'query' | 'release'>, private readonly storage?: StorageService) {}
 
   private async transaction<T>(work: (client: Pick<PoolClient, 'query'>) => Promise<T>): Promise<T> {
     if ('release' in this.pool) return work(this.pool);
@@ -96,10 +98,10 @@ export class PostgresRepository implements CatalogRepository {
     const assets = await this.pool.query<Asset>(`SELECT a.id, a.kind, a.name, a.media_type AS "mediaType",
       coalesce(f.size_bytes,a.size_bytes)::text AS "sizeBytes", coalesce(f.sha256,a.sha256) AS sha256, a.version, a.storage_id AS "storageId",
       coalesce(f.relative_path,a.relative_path) AS "relativePath", a.external_url AS "externalUrl", s.key AS "storageKey",
-      a.origin, a.file_id AS "fileId", f.status AS "fileStatus", f.format, a.created_at AS "createdAt"
+      a.origin, a.file_id AS "fileId", a.metadata->>'role' AS role, f.status AS "fileStatus", f.format, a.created_at AS "createdAt"
       FROM assets a LEFT JOIN storage_files f ON f.id=a.file_id LEFT JOIN storage_locations s ON s.id = coalesce(f.storage_id,a.storage_id)
       WHERE a.product_id = $1 AND a.retired_at IS NULL ORDER BY a.created_at ASC, a.id ASC`, [id]);
-    return { ...summary(row), sourceUrl: row.source_url, assets: assets.rows };
+    return { ...summary(row), sourceUrl: row.source_url, assets: assets.rows, figureFile: assets.rows.find(asset => asset.role === 'figure') ?? null };
   }
 
   async categories(): Promise<Category[]> {
@@ -116,6 +118,7 @@ export class PostgresRepository implements CatalogRepository {
   }
 
   private async relations(client: Pick<PoolClient, 'query'>, id: string, input: ProductInput) {
+    if (input.figureFile !== undefined) await saveFigureFile(client, this.storage, id, input.figureFile);
     const categoryIds = [...new Set(input.categoryIds ?? [])];
     if (categoryIds.length) {
       const existing = await client.query<{ id: string }>('SELECT id FROM categories WHERE id = ANY($1::uuid[])', [categoryIds]);

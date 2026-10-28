@@ -197,7 +197,7 @@ export class TransferService {
       for await (const row of databaseRows(client, 'products')) {
         const categories = await client.query('SELECT c.id,c.slug,c.name FROM product_categories pc JOIN categories c ON c.id=pc.category_id WHERE pc.product_id=$1 ORDER BY c.id', [row.id]);
         const tags = await client.query('SELECT t.id,t.name FROM product_tags pt JOIN tags t ON t.id=pt.tag_id WHERE pt.product_id=$1 ORDER BY t.id', [row.id]);
-        const assets = await client.query('SELECT a.id,a.name,s.key AS storage_key,a.relative_path,a.external_url FROM assets a LEFT JOIN storage_locations s ON s.id=a.storage_id WHERE a.product_id=$1 ORDER BY a.id', [row.id]);
+        const assets = await client.query("SELECT a.id,a.name,s.key AS storage_key,a.relative_path,a.external_url,a.metadata->>'role' AS role FROM assets a LEFT JOIN storage_locations s ON s.id=a.storage_id WHERE a.product_id=$1 ORDER BY a.id", [row.id]);
         yield [row.id, row.sku, row.title, row.description, row.status, categories.rows, tags.rows, assets.rows, row.cover_asset_id, row.created_at.toISOString(), row.updated_at.toISOString()].map(csv).join(',') + '\r\n';
       }
       await client.query('COMMIT');

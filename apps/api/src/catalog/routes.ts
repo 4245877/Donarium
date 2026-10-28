@@ -17,6 +17,9 @@ const productBody = {
     categoryIds: { type: 'array', maxItems: 100, uniqueItems: true, items: { type: 'string', format: 'uuid' } },
     tags: { type: 'array', maxItems: 100, items: { type: 'string', minLength: 1, maxLength: 100 } },
     coverAssetId: { anyOf: [{ type: 'string', format: 'uuid' }, { type: 'null' }] },
+    figureFile: { anyOf: [{ type: 'null' }, { type: 'object', additionalProperties: false, required: ['root', 'path'], properties: {
+      root: { type: 'string', minLength: 1, maxLength: 64 }, path: { type: 'string', minLength: 1, maxLength: 4096 },
+    } }] },
   },
 };
 

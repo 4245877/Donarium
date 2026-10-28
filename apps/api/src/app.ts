@@ -13,6 +13,7 @@ import { registerAuth } from './auth.js';
 import { registerStorageRoutes } from './storage/routes.js';
 import { registerTransferRoutes } from './transfer/routes.js';
 import { registerCatalogRoutes } from './catalog/routes.js';
+import { StorageService } from './storage/service.js';
 
 export interface AppOptions {
   config?: Config;
@@ -36,7 +37,7 @@ export async function buildApp(options: AppOptions = {}): Promise<FastifyInstanc
   });
   let pool = options.pool;
   if (config.dataMode === 'postgres' && !pool) pool = createPool(config.databaseUrl!);
-  const repository = options.repository ?? (config.dataMode === 'postgres' ? new PostgresRepository(pool!) : new DemoRepository());
+  const repository = options.repository ?? (config.dataMode === 'postgres' ? new PostgresRepository(pool!, new StorageService(config)) : new DemoRepository());
   if (pool && !options.pool) {
     pool.on('error', () => app.log.error('Database pool connection error'));
     app.addHook('onClose', async () => { await pool!.end(); });

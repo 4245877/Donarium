@@ -59,8 +59,8 @@ before(async () => {
   assert.equal(response.statusCode, 201, response.body); productId = response.json().item.id;
   const storage = new StorageService(config('source'));
   for (const name of fixtures.keys()) await linkFile(source, storage, productId, 'ORIGINALS', name);
-  const repo = new PostgresRepository(source); const linked = (await repo.get(productId))!;
-  await repo.update(productId, { title: linked.title, sku: linked.sku, description: linked.description, categoryIds: linked.categories.map(item => item.id), tags: linked.tags, status: linked.status, coverAssetId: linked.assets.find(asset => asset.kind === 'image')!.id });
+  const repo = new PostgresRepository(source, storage); const linked = (await repo.get(productId))!;
+  await repo.update(productId, { title: linked.title, sku: linked.sku, description: linked.description, categoryIds: linked.categories.map(item => item.id), tags: linked.tags, status: linked.status, coverAssetId: linked.assets.find(asset => asset.kind === 'image')!.id, figureFile: { root: 'ORIGINALS', path: 'dragon.stl' } });
   await repo.create({ title: '=SUM(1,2)', description: 'Optional SKU', tags: ['без SKU'] });
   original = await repo.get(productId);
 });
@@ -86,6 +86,9 @@ test('portable catalogue exports JSON/CSV and restores a full ZIP into separate 
   const product = (await new PostgresRepository(restored).get(productId))!;
   for (const field of ['id', 'sku', 'title', 'description', 'status', 'coverAssetId', 'categories', 'tags', 'createdAt', 'updatedAt'] as const) assert.deepEqual(product[field], original![field], field);
   assert.deepEqual(product.assets.map(asset => asset.id).sort(), original!.assets.map(asset => asset.id).sort());
+  assert.equal(product.figureFile?.id, original!.figureFile?.id);
+  assert.equal(product.figureFile?.role, 'figure');
+  assert.equal(product.figureFile?.storageKey, 'DONARIUM_UPLOADS');
   for (const asset of product.assets) {
     const bytes = fixtures.get(asset.name)!; const downloaded = await restoreApp.inject({ url: `/api/v1/assets/${asset.id}/download`, headers: { cookie: restoreCookie } });
     assert.equal(downloaded.statusCode, 200); assert.deepEqual(downloaded.rawPayload, bytes);

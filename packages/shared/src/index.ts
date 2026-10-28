@@ -3,9 +3,15 @@ export type DataMode = 'demo' | 'postgres';
 export interface Category { id: string; slug: string; name: string }
 export interface ProductImage { url: string; alt: string }
 export type ProductStatus = 'ready' | 'processing';
+export const FIGURE_FILE_EXTENSIONS = ['stl', '3mf', 'obj', 'step', 'stp', 'ply', 'amf', 'glb', 'gltf', 'fbx', 'blend', 'f3d', 'scad', 'max', 'zip', 'rar', '7z', 'tar', 'gz'] as const;
+export const isFigureFileName = (name: string) => FIGURE_FILE_EXTENSIONS.some(extension => name.toLowerCase().endsWith(`.${extension}`));
+export interface FileReference { root: string; path: string }
+export interface StorageEntry { name: string; path: string; type: 'directory' | 'file'; sizeBytes: string | null }
+export interface FigureFileInfo extends FileReference { name: string; sizeBytes: string; format: string; modifiedAt: string }
 export interface ProductInput {
   title: string; sku?: string | null; description?: string; status?: ProductStatus;
   categoryIds?: string[]; tags?: string[]; coverAssetId?: string | null;
+  figureFile?: FileReference | null;
 }
 export interface CategoryInput { name: string; slug?: string }
 export interface ProductSummary {
@@ -15,6 +21,7 @@ export interface ProductSummary {
   assetCount: number; createdAt: string; updatedAt: string;
 }
 export interface Asset {
+  role?: string | null;
   fileId?: string | null; fileStatus?: string | null; format?: string;
   id: string; kind: 'image' | 'model' | 'archive' | 'source' | 'other';
   name: string; mediaType: string; sizeBytes: string | null; sha256: string | null;
@@ -22,7 +29,7 @@ export interface Asset {
   externalUrl: string | null;
   storageKey?: string | null; origin?: 'external' | 'uploaded'; createdAt?: string;
 }
-export interface Product extends ProductSummary { assets: Asset[]; sourceUrl: string | null }
+export interface Product extends ProductSummary { assets: Asset[]; sourceUrl: string | null; figureFile?: Asset | null }
 export interface CatalogQuery { q: string; category: string; tag?: string; status?: '' | ProductStatus; page: number; pageSize: number; sort: 'newest' | 'updated' | 'title' }
 export interface CatalogResponse {
   items: ProductSummary[]; total: number; page: number; pageSize: number;

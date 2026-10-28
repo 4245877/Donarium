@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { Readable } from 'node:stream';
 import type { Pool, PoolClient } from 'pg';
 import { StorageService, StorageError, fileMetadata } from './service.js';
+import { isFigureFileName } from '@donarium/shared';
 
 type Query = Pick<PoolClient,'query'>;
 export interface FileRow {
@@ -43,6 +44,7 @@ export async function attachFile(client:Query,service:StorageService,productId:s
   if(options.replaceAssetId) {
     const previous=(await client.query('SELECT * FROM assets WHERE id=$1 AND product_id=$2 FOR UPDATE',[options.replaceAssetId,productId])).rows[0];
     if(!previous) throw new StorageError('Заменяемое вложение не найдено',404);
+    if(previous.metadata?.role==='figure' && (!isFigureFileName(file.relative_path) || service.root(file.storage_key).internal)) throw new StorageError('Для поля «Файл фигурки» выберите модель или архив из разрешённого хранилища');
     if(previous.file_id===fileId && (!options.name || options.name===previous.name))return {id:previous.id,inserted:false};
     const duplicate=(await client.query('SELECT id FROM assets WHERE product_id=$1 AND file_id=$2 AND id<>$3',[productId,fileId,previous.id])).rows[0];
     if(duplicate) throw new StorageError('Этот файл уже прикреплён к карточке',409);

@@ -136,7 +136,8 @@ test('folder import API previews nested library, recognizes covers, is idempoten
     assert.equal(result.rowCount, 1); assert.equal(result.rows[0]!.count, '3'); importedId = result.rows[0]!.id;
     const card = (await repository.get(importedId))!;
     assert.ok(card.coverAssetId);
-    assert.equal(card.assets.find(asset => asset.name === 'part_01.stl')?.sizeBytes, String(Buffer.byteLength(run ? 'part one updated' : 'part 1')));
+    if(run) assert.equal(card.assets.find(asset=>asset.name==='part_01.stl')?.fileStatus,'corrupt', 'A rescan must preserve the baseline and report altered originals');
+    assert.equal(card.assets.find(asset => asset.name === 'part_01.stl')?.sizeBytes, String(Buffer.byteLength('part 1')));
   }
   assert.equal(await readFile(join(folder, 'part_01.stl'), 'utf8'), 'part one updated');
 });

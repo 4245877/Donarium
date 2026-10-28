@@ -1,0 +1,15 @@
+[Unit]
+Description=Restrict Donarium TCP 4180 to LAN and Tailscale before Docker DNAT
+DefaultDependencies=no
+Wants=network-pre.target
+After=local-fs.target ufw.service
+Before=network-pre.target docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f /etc/ufw/donarium-4180.nft
+ExecReload=/usr/sbin/nft -f /etc/ufw/donarium-4180.nft
+
+[Install]
+WantedBy=multi-user.target

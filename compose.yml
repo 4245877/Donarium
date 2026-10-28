@@ -6,6 +6,7 @@ services:
     restart: unless-stopped
     ports:
       - "${HOST:-127.0.0.1}:${PORT:-4180}:4180"
+      - "${TAILSCALE_IP:-127.0.0.1}:${PORT:-4180}:4180"
     environment:
       HOST: 0.0.0.0
       PORT: 4180
@@ -16,6 +17,8 @@ services:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
       SECURE_COOKIE: ${SECURE_COOKIE:-false}
       STORAGE_ROOTS: ${STORAGE_ROOTS:-[]}
+      STORAGE_REQUIRE_GUARDS: ${STORAGE_REQUIRE_GUARDS:-false}
+      STORAGE_GUARDS: ${STORAGE_GUARDS:-[]}
       MANAGED_STORAGE_ROOT: /app/var/uploads
       WORK_ROOT: /app/var/work
       MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-21474836480}

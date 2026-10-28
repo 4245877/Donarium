@@ -1,0 +1,13 @@
+[Unit]
+Description=Retry Donarium after an unavailable NFS server
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+ExecCondition=/usr/bin/systemctl is-enabled --quiet donarium.service
+ExecStart=/usr/bin/systemctl start donarium.service
+Restart=on-failure
+RestartSec=30s
+TimeoutStartSec=300s

@@ -2,6 +2,16 @@
 
 `JSON` и переносимый ZIP предназначены для обмена библиотекой. Полная резервная копия дополнительно сохраняет PostgreSQL, включая схему и историю миграций, и все настроенные файловые корни. Скрипт не удаляет данные и не изменяет оригиналы.
 
+## Текущая NFS-установка .141
+
+Рабочие uploads находятся в `/mnt/donarium/uploads`, work — в `/mnt/donarium/work`; host-настройки MANAGED_STORAGE_ROOT/WORK_ROOT в `.env` обновлены на эти пути. Прежний `var/uploads` на .151 сохранён для проверки и отката и не является источником новых загрузок.
+
+Для библиотеки 394 ГиБ сохраняйте отдельно PostgreSQL custom dump и **ZIP метаданных v2** («Экспорт и восстановление» → «Метаданные ZIP для восстановления»). Файлы копируйте на другой физический диск/сервер; не создавайте полный tar/ZIP библиотеки на системном диске .151 или дополнительную распакованную копию на .141. Полный ZIP приложения ограничен 4 ГиБ.
+
+Нативный `scripts/backup.mjs` ниже создаёт tar настроенных корней и пригоден только при достаточном месте на выбранном независимом назначении. Он не вычисляет автоматически контейнерные STORAGE_ROOTS из Compose: для включения library явно задайте BACKUP_STORAGE_ROOTS с host-путями. Backup только uploads не включает 607 архивов библиотеки. Для большой библиотеки используйте отдельное файловое резервирование с описью SHA-256, как в [LOCAL_STORAGE.md](LOCAL_STORAGE.md).
+
+Перед backup проверьте фактические sources четырёх NFS mounts. Для остановки/запуска текущего app используйте `sudo systemctl stop donarium.service` и `sudo systemctl start donarium.service`; NFS override сохраняется. После восстановления сначала проверяйте отдельную БД, UUID реестра, связи и целостность оригиналов. Восстановление старого dump поверх текущих пользовательских правок для отката релиза не используется.
+
 ## Создание копии
 
 Нужны Node.js 22+, GNU tar и PostgreSQL `pg_dump` версии не ниже сервера. Для Docker-установки можно использовать `pg_dump` уже установленный в контейнере PostgreSQL. В `.env` должны быть заданы `DATABASE_URL`, `STORAGE_ROOTS` (или `STORAGE_ROOT`) и `MANAGED_STORAGE_ROOT`.
@@ -11,13 +21,13 @@
 Docker, из корня checkout:
 
 ```bash
-docker compose -f compose.yml -f compose.postgres.yml stop app
+sudo systemctl stop donarium.service
 mkdir -p /srv/backups/donarium
 BACKUP_CONFIRM=donarium BACKUP_QUIESCED=donarium \
   BACKUP_DB_CONTAINER="$(docker compose -f compose.yml -f compose.postgres.yml ps -q db)" \
   node scripts/backup.mjs /srv/backups/donarium/2026-10-24
 # Возобновляйте запись только после сообщения Backup complete.
-docker compose -f compose.yml -f compose.postgres.yml start app
+sudo systemctl start donarium.service
 ```
 
 Для установленного на хосте PostgreSQL используйте тот же скрипт без `BACKUP_DB_CONTAINER`. Если `DATABASE_URL` содержит Docker-hostname `db`, для клиента на хосте задайте `BACKUP_DATABASE_URL` с адресом `127.0.0.1:5548`. Скрипт не выводит URL и пароли. Если `STORAGE_ROOTS` содержит контейнерные пути (например `/library/models`), задайте `BACKUP_STORAGE_ROOTS` с теми же ключами и настоящими путями хоста (например `[{"key":"MODELS","path":"/mnt/models"}]`). Управляемый корень для backup берётся из хостового `MANAGED_STORAGE_ROOT`, по умолчанию `var/uploads`.

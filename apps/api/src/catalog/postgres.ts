@@ -16,7 +16,7 @@ const selection = `p.id, p.sku, p.title, p.description, p.status, p.cover_asset_
     FROM product_categories pc JOIN categories c ON c.id = pc.category_id WHERE pc.product_id = p.id), '[]'::jsonb) AS categories,
   COALESCE((SELECT jsonb_agg(t.name ORDER BY t.name)
     FROM product_tags pt JOIN tags t ON t.id = pt.tag_id WHERE pt.product_id = p.id), '[]'::jsonb) AS tags,
-  (SELECT count(*) FROM assets a WHERE a.product_id = p.id)::text AS asset_count`;
+  (SELECT count(*) FROM assets a WHERE a.product_id = p.id AND a.retired_at IS NULL)::text AS asset_count`;
 
 function summary(row: ProductRow): ProductSummary {
   return {
@@ -94,11 +94,11 @@ export class PostgresRepository implements CatalogRepository {
     const row = result.rows[0];
     if (!row) return null;
     const assets = await this.pool.query<Asset>(`SELECT a.id, a.kind, a.name, a.media_type AS "mediaType",
-      a.size_bytes::text AS "sizeBytes", a.sha256, a.version, a.storage_id AS "storageId",
-      a.relative_path AS "relativePath", a.external_url AS "externalUrl", s.key AS "storageKey",
-      a.origin, a.created_at AS "createdAt"
-      FROM assets a LEFT JOIN storage_locations s ON s.id = a.storage_id
-      WHERE a.product_id = $1 ORDER BY a.created_at ASC, a.id ASC`, [id]);
+      coalesce(f.size_bytes,a.size_bytes)::text AS "sizeBytes", coalesce(f.sha256,a.sha256) AS sha256, a.version, a.storage_id AS "storageId",
+      coalesce(f.relative_path,a.relative_path) AS "relativePath", a.external_url AS "externalUrl", s.key AS "storageKey",
+      a.origin, a.file_id AS "fileId", f.status AS "fileStatus", f.format, a.created_at AS "createdAt"
+      FROM assets a LEFT JOIN storage_files f ON f.id=a.file_id LEFT JOIN storage_locations s ON s.id = coalesce(f.storage_id,a.storage_id)
+      WHERE a.product_id = $1 AND a.retired_at IS NULL ORDER BY a.created_at ASC, a.id ASC`, [id]);
     return { ...summary(row), sourceUrl: row.source_url, assets: assets.rows };
   }
 

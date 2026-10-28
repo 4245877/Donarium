@@ -1,4 +1,4 @@
-import type { FastifyInstance, FastifyReply } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Pool } from 'pg';
 import { extname } from 'node:path';
 import { Readable } from 'node:stream';
@@ -9,21 +9,21 @@ import type { CatalogRepository } from '../catalog/repository.js';
 import { FolderImports, linkFile } from './imports.js';
 import { fileMetadata, safeFileName, StorageError, StorageService } from './service.js';
 
+import { registerRegistryRoutes } from './registry-routes.js';
+import { disposition, sendPhysical } from './download.js';
 const uuid = { type: 'string', format: 'uuid' };
 const productParams = { type: 'object', required: ['id'], properties: { id: uuid } };
 const rootPath = { root: { type: 'string', maxLength: 64 }, path: { type: 'string', maxLength: 4096, default: '' } };
-interface DbAsset { id: string; name: string; kind: string; media_type: string; relative_path: string | null; key: string | null; external_url: string | null }
-function disposition(name: string, inline = false) {
-  return `${inline ? 'inline' : 'attachment'}; filename="download${extname(name).replace(/[^a-zA-Z0-9.]/g, '')}"; filename*=UTF-8''${encodeURIComponent(name).replace(/['()*]/g, char => `%${char.charCodeAt(0).toString(16)}`)}`;
-}
+interface DbAsset { id: string; name: string; kind: string; media_type: string; relative_path: string | null; key: string | null; external_url: string | null; size_bytes: string | null; sha256: string | null; status: string | null }
 export async function registerStorageRoutes(app: FastifyInstance, pool: Pool, repository: CatalogRepository, config: Config) {
   const service = new StorageService(config);
   if (config.managedRoot && config.workRoot) await service.init();
+  const registry = await registerRegistryRoutes(app, pool, service);
   const imports = new FolderImports(service, pool);
   app.addHook('onClose', async () => { await imports.close(); });
   const findAsset = async (id: string) => {
-    const result = await pool.query<DbAsset>(`SELECT a.id,a.name,a.kind,a.media_type,a.relative_path,a.external_url,s.key
-      FROM assets a LEFT JOIN storage_locations s ON s.id=a.storage_id WHERE a.id=$1`, [id]);
+    const result = await pool.query<DbAsset>(`SELECT a.id,a.name,a.kind,a.media_type,coalesce(f.relative_path,a.relative_path) AS relative_path,a.external_url,s.key,f.size_bytes::text,f.sha256,f.status
+      FROM assets a LEFT JOIN storage_files f ON f.id=a.file_id LEFT JOIN storage_locations s ON s.id=coalesce(f.storage_id,a.storage_id) WHERE a.id=$1 AND a.retired_at IS NULL`, [id]);
     const asset = result.rows[0];
     if (!asset) throw new StorageError('Ресурс не найден', 404);
     return asset;
@@ -31,7 +31,7 @@ export async function registerStorageRoutes(app: FastifyInstance, pool: Pool, re
   const assertProduct = async (id: string) => {
     if (!(await pool.query('SELECT id FROM products WHERE id=$1', [id])).rowCount) throw new StorageError('Карточка не найдена', 404);
   };
-  app.get('/api/v1/storage/roots', async () => ({ roots: service.listRoots() }));
+  app.get('/api/v1/storage/roots', async () => ({ roots: service.listRoots(), inventoryAvailable: service.roots.some(root=>root.key==='INVENTORY') }));
   app.get<{ Querystring: { root: string; path: string; page: number; pageSize: number } }>('/api/v1/storage/browse', {
     schema: { querystring: { type: 'object', additionalProperties: false, required: ['root'], properties: {
       ...rootPath, page: { type: 'integer', minimum: 1, maximum: 100000, default: 1 }, pageSize: { type: 'integer', minimum: 1, maximum: 200, default: 100 },
@@ -82,18 +82,20 @@ export async function registerStorageRoutes(app: FastifyInstance, pool: Pool, re
     }, async (request, reply) => {
       await assertProduct(request.params.id);
       safeFileName(request.query.name);
-      const uploaded = await service.writeUpload(request.body, request.query.name);
-      const id = await linkFile(pool, service, request.params.id, uploaded.root, uploaded.relativePath, 'uploaded', uploaded.sha256);
-      // A failed metadata write deliberately retains the uploaded original; never auto-delete originals.
-      return reply.code(201).send({ asset: { id, ...uploaded } });
+      const result = await registry.upload(request.body, request.query.name, request.params.id);
+      return reply.code(201).send(result);
     });
   });
   app.delete<{ Params: { id: string; assetId: string } }>('/api/v1/products/:id/assets/:assetId', {
     schema: { params: { type: 'object', required: ['id', 'assetId'], properties: { id: uuid, assetId: uuid } } },
   }, async (request, reply) => {
-    const result = await pool.query('DELETE FROM assets WHERE id=$1 AND product_id=$2', [request.params.assetId, request.params.id]);
-    if (!result.rowCount) throw new StorageError('Ресурс не найден', 404);
-    await pool.query('UPDATE products SET updated_at=now() WHERE id=$1', [request.params.id]);
+    await registry.transaction(async client => {
+      await client.query('SELECT id FROM products WHERE id=$1 FOR UPDATE',[request.params.id]);
+      const result = await client.query('DELETE FROM assets WHERE id=$1 AND product_id=$2 RETURNING file_id', [request.params.assetId, request.params.id]);
+      if (!result.rowCount) throw new StorageError('Ресурс не найден', 404);
+      await client.query('UPDATE products SET updated_at=now() WHERE id=$1', [request.params.id]);
+      await client.query(`INSERT INTO storage_events(file_id,product_id,action,details) VALUES($1,$2,'detach',$3)`, [result.rows[0].file_id,request.params.id,JSON.stringify({assetId:request.params.assetId})]);
+    });
     return reply.code(204).send();
   });
   app.get<{ Params: { id: string } }>('/api/v1/products/:id/assets/status', { schema: { params: productParams } }, async request => {
@@ -104,23 +106,23 @@ export async function registerStorageRoutes(app: FastifyInstance, pool: Pool, re
       let status = 'unavailable';
       if (asset.externalUrl) status = 'external';
       else if (asset.storageKey && asset.relativePath) {
-        try { const file = await service.open(asset.storageKey, asset.relativePath); await file.handle.close(); status = 'available'; }
+        try { const file = await service.open(asset.storageKey, asset.relativePath); const size=String(file.stat.size);await file.handle.close(); status = asset.fileStatus === 'corrupt' || asset.sizeBytes!==null&&asset.sizeBytes!==size ? 'corrupt' : 'available';
+          if(status==='corrupt'&&asset.fileId)await pool.query("UPDATE storage_files SET status='corrupt',checked_at=now() WHERE id=$1",[asset.fileId]);
+        }
         catch (error) { status = error instanceof StorageError && error.statusCode === 404 ? 'missing' : 'unavailable'; }
       }
       items.push({ id: asset.id, status });
     }
     return { items };
   });
-  const sendAsset = async (id: string, reply: FastifyReply, inline = false) => {
+  const sendAsset = async (id: string, request: FastifyRequest, reply: FastifyReply, inline = false) => {
     const asset = await findAsset(id);
     if (!asset.key || !asset.relative_path) throw new StorageError('Файл не подключён к локальному хранилищу', 404);
-    const { stream, stat } = await service.readStream(asset.key, asset.relative_path);
-    const canInline = inline && fileMetadata(asset.name).kind === 'image';
-    return reply.header('Content-Disposition', disposition(asset.name, canInline)).header('Content-Length', stat.size)
-      .header('Cache-Control', 'private, no-cache').type(canInline ? fileMetadata(asset.name).mediaType : 'application/octet-stream').send(stream);
+    if(asset.status==='corrupt') throw new StorageError('Файл повреждён; требуется проверка',409);
+    return sendPhysical(service,asset.key,asset.relative_path,asset.name,request,reply,{inline:inline&&fileMetadata(asset.name).kind==='image',size:asset.size_bytes,sha256:asset.sha256});
   };
   for (const action of ['download', 'content']) {
-    app.get<{ Params: { id: string } }>(`/api/v1/assets/:id/${action}`, { schema: { params: productParams } }, (request, reply) => sendAsset(request.params.id, reply, action === 'content'));
+    app.get<{ Params: { id: string } }>(`/api/v1/assets/:id/${action}`, { schema: { params: productParams } }, (request, reply) => sendAsset(request.params.id, request, reply, action === 'content'));
   }
   let thumbnails = 0;
   const thumbnailWaiters: Array<() => void> = [];
@@ -163,8 +165,10 @@ export async function registerStorageRoutes(app: FastifyInstance, pool: Pool, re
     if (!product.assets.length) throw new StorageError('В карточке нет файлов', 400);
     // Verify availability before sending headers; no silent partial archives.
     for (const asset of product.assets) {
+      if(asset.fileStatus==='corrupt')throw new StorageError('Один из оригиналов повреждён; выполните проверку',409);
       if (!asset.storageKey || !asset.relativePath) throw new StorageError('Один из файлов не подключён к хранилищу', 409);
-      const file = await service.open(asset.storageKey, asset.relativePath); await file.handle.close();
+      const file = await service.open(asset.storageKey, asset.relativePath); const size=String(file.stat.size);await file.handle.close();
+      if(asset.sizeBytes!==null&&asset.sizeBytes!==size)throw new StorageError('Размер оригинала изменился; выполните проверку',409);
     }
     if (zipCount >= 2) throw new StorageError('Уже скачиваются два архива; повторите позже', 429);
     zipCount++;

@@ -73,7 +73,7 @@ after(async () => {
 
 test('portable catalogue exports JSON/CSV and restores a full ZIP into separate empty PostgreSQL and storage', { skip }, async () => {
   let response = await sourceApp.inject({ url: '/api/v1/exports/catalog.json', headers: { cookie: sourceCookie } }); assert.equal(response.statusCode, 200, response.body);
-  assert.equal(response.json().version, 1); assert.equal(response.json().products.length, 2); assert.equal(response.json().assets.length, 3); assert.ok(!response.body.includes(temporary));
+  assert.equal(response.json().version, 2); assert.equal(response.json().products.length, 2); assert.equal(response.json().assets.length, 3); assert.ok(!response.body.includes(temporary));
   response = await sourceApp.inject({ url: '/api/v1/exports/catalog.csv', headers: { cookie: sourceCookie } }); assert.equal(response.statusCode, 200, response.body); assert.ok(response.body.includes('categories_json')); assert.ok(response.body.includes("'=SUM(1,2)"));
   response = await sourceApp.inject({ method: 'POST', url: '/api/v1/exports/archive', headers: { cookie: sourceCookie } }); assert.equal(response.statusCode, 202, response.body);
   const exported = await poll(sourceApp, sourceCookie, response.json().id); assert.equal(exported.status, 'completed', JSON.stringify(exported));
@@ -105,6 +105,9 @@ test('reimport previews conflicts, skips duplicates, copies with new IDs and nev
     await restoreApp.inject({ method: 'DELETE', url: `/api/v1/transfers/${job.id}`, headers: { cookie: restoreCookie } });
   }
   assert.equal((await restored.query('SELECT count(*)::int AS count FROM products')).rows[0].count, 4);
+  assert.equal((await restored.query('SELECT count(*)::int AS count FROM storage_files')).rows[0].count,3,'Repeated restores reuse physical file UUIDs');
+  const countFiles=async(path:string):Promise<number>=>{let count=0;for(const entry of await readdir(path,{withFileTypes:true}))count+=entry.isDirectory()?await countFiles(join(path,entry.name)):1;return count;};
+  assert.equal(await countFiles(join(temporary,'restore','uploads','restored')),3,'No extra original bytes remain after repeated restores');
   const product = (await new PostgresRepository(restored).get(productId))!;
   for (const asset of product.assets) assert.equal((await restoreApp.inject({ url: `/api/v1/assets/${asset.id}/download`, headers: { cookie: restoreCookie } })).statusCode, 200);
 });

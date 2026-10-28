@@ -1,0 +1,16 @@
+# Install/enable only after production storage switch is approved.
+[Unit]
+Description=Donarium with required NFS storage
+Requires=docker.service mnt-donarium-library.mount mnt-donarium-uploads.mount mnt-donarium-work.mount mnt-donarium-inventory.mount
+After=docker.service mnt-donarium-library.mount mnt-donarium-uploads.mount mnt-donarium-work.mount mnt-donarium-inventory.mount
+BindsTo=mnt-donarium-library.mount mnt-donarium-uploads.mount mnt-donarium-work.mount mnt-donarium-inventory.mount
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/home/hpelitdesk/apps/Donarium
+ExecStart=/usr/bin/docker compose -f compose.yml -f compose.postgres.yml -f compose.nfs.yml up -d --no-deps --no-build --pull never --force-recreate app
+ExecStop=/usr/bin/docker compose -f compose.yml -f compose.postgres.yml -f compose.nfs.yml stop app
+TimeoutStartSec=180
+TimeoutStopSec=180
+[Install]
+WantedBy=multi-user.target

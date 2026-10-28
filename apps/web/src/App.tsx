@@ -6,6 +6,7 @@ import { message, mutate, useApi } from './api';
 import { CatalogPage, ProductPage, ProductEditor, SystemPage, NotFoundPage } from './pages';
 import { ImportPage, TransferPage } from './transfers';
 import { ErrorState, Loading, ThemeSwitch } from './components';
+import { FilesPage } from './files';
 import { Dashboard } from './Dashboard';
 
 const ReadOnlyContext = createContext(true);
@@ -45,7 +46,7 @@ function Shell({ logout }: { logout: () => Promise<void> }) {
     const trap = (event: KeyboardEvent) => { if (event.key !== 'Tab') return; const elements = focusable(); if (event.shiftKey && document.activeElement === elements[0]) { event.preventDefault(); elements.at(-1)?.focus(); } else if (!event.shiftKey && document.activeElement === elements.at(-1)) { event.preventDefault(); elements[0]?.focus(); } };
     document.addEventListener('keydown', trap); return () => { document.removeEventListener('keydown', trap); previous?.focus(); };
   }, [mobileOpen, isMobile]);
-  const page = location.pathname === '/' ? 'Обзор библиотеки' : location.pathname.startsWith('/import') ? 'Импорт папок' : location.pathname.startsWith('/transfer') ? 'Экспорт и восстановление' : location.pathname === '/settings' ? 'Настройки и состояние' : location.pathname === '/catalog/new' ? 'Новая карточка' : location.pathname.includes('/edit') ? 'Редактирование' : location.pathname === '/catalog' ? 'Каталог' : 'Карточка модели';
+  const page = location.pathname === '/files' ? 'Файлы' : location.pathname === '/' ? 'Обзор библиотеки' : location.pathname.startsWith('/import') ? 'Импорт папок' : location.pathname.startsWith('/transfer') ? 'Экспорт и восстановление' : location.pathname === '/settings' ? 'Настройки и состояние' : location.pathname === '/catalog/new' ? 'Новая карточка' : location.pathname.includes('/edit') ? 'Редактирование' : location.pathname === '/catalog' ? 'Каталог' : 'Карточка модели';
   const online = health.data?.status === 'ok';
   return <div className="app-layout">
     <a className="skip-link" href="#main">К содержимому</a>
@@ -58,6 +59,7 @@ function Shell({ logout }: { logout: () => Promise<void> }) {
       <nav className="main-nav" aria-label="Основная навигация">
         <NavLink to="/" end><House size={18} /><span>Обзор</span><span className="nav-active-dot" /></NavLink>
         <NavLink to="/catalog"><BookOpen size={18} /><span>Каталог моделей</span></NavLink>
+        <NavLink to="/files"><BookOpen size={18}/><span>Файлы</span></NavLink>
         <NavLink to="/import"><Upload size={18} /><span>Импорт папок</span></NavLink>
         <NavLink to="/transfer"><Download size={18} /><span>Экспорт и восстановление</span></NavLink>
       </nav>
@@ -69,7 +71,7 @@ function Shell({ logout }: { logout: () => Promise<void> }) {
     </aside>
     <div className="main-shell" inert={isMobile && mobileOpen}>
       <header className="topbar"><button className="icon-button mobile-menu" aria-label="Открыть меню" aria-expanded={mobileOpen} onClick={() => setMobileOpen(!mobileOpen)}><Menu size={21} /></button><div className="breadcrumbs"><Butterfly /><span>Святилище</span><ChevronRight size={12} /><span>{page}</span></div><form className="global-search" role="search" onSubmit={event => { event.preventDefault(); navigate(`/catalog${search ? `?q=${encodeURIComponent(search)}` : ''}`); searchRef.current?.blur(); }}><Search size={16} /><input ref={searchRef} value={search} onChange={event => setSearch(event.target.value)} aria-label="Найти в библиотеке" placeholder="Найти что-нибудь интересное…" maxLength={200} /><kbd>Ctrl K</kbd></form><div className="topbar-right"><Link className="icon-button topbar-export" to="/transfer" aria-label="Экспорт библиотеки"><Download size={17} /></Link><Link className="icon-button" to="/settings" aria-label="Состояние приложения"><CircleHelp size={18} /></Link><ThemeSwitch /></div></header>
-      <main id="main"><Routes><Route path="/" element={<Dashboard />} /><Route path="/catalog" element={<CatalogPage />} /><Route path="/catalog/new" element={<ProductEditor />} /><Route path="/catalog/:id/edit" element={<ProductEditor />} /><Route path="/catalog/:id" element={<ProductPage />} /><Route path="/import" element={<ImportPage />} /><Route path="/transfer" element={<TransferPage />} /><Route path="/settings" element={<SystemPage />} /><Route path="/system" element={<Navigate replace to="/settings" />} /><Route path="*" element={<NotFoundPage />} /></Routes></main>
+      <main id="main"><Routes><Route path="/" element={<Dashboard />} /><Route path="/catalog" element={<CatalogPage />} /><Route path="/catalog/new" element={<ProductEditor />} /><Route path="/catalog/:id/edit" element={<ProductEditor />} /><Route path="/catalog/:id" element={<ProductPage />} /><Route path="/files" element={<FilesPage />} /><Route path="/import" element={<ImportPage />} /><Route path="/transfer" element={<TransferPage />} /><Route path="/settings" element={<SystemPage />} /><Route path="/system" element={<Navigate replace to="/settings" />} /><Route path="*" element={<NotFoundPage />} /></Routes></main>
       <footer className="page-footer"><span><Butterfly />ECHIDNA <span className="footer-divider">/</span>Цифровое Святилище</span><span>Пусть твоё любопытство никогда не угасает. <span className="footer-star"><Sparkle /></span></span></footer>
     </div>
     {!readOnly && <Link className="floating-create" to="/catalog/new" aria-label="Создать карточку" inert={isMobile && mobileOpen}><Plus size={20} /></Link>}

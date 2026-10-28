@@ -5,13 +5,15 @@ import { dirname, join } from 'node:path';
 import { Transform, type Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import yauzl, { type Entry } from 'yauzl';
+import { validateRegistryArchive } from './registry-format.js';
 import { safeRelativePath } from '../storage/service.js';
 
-export const FORMAT_VERSION = 1;
+export const FORMAT_VERSION = 2;
+const LEGACY_FORMAT_VERSION = 1;
 export const TABLES = ['products', 'categories', 'tags', 'product_categories', 'product_tags', 'assets', 'external_links'] as const;
 export type TableName = typeof TABLES[number];
 export type Row = Record<string, any>;
-export interface Manifest { format: 'donarium'; version: 1; createdAt: string; tables: Record<TableName, { count: number; sha256: string }>; }
+export interface Manifest { format: 'donarium'; version: 1 | 2; fileMode?: 'metadata' | 'files'; createdAt: string; tables: Record<TableName | 'storage_files' | 'import_sources' | 'storage_operations' | 'storage_matches' | 'storage_events', { count: number; sha256: string }>; }
 export class TransferError extends Error { constructor(message: string, public statusCode = 400) { super(message); } }
 export const uuid = (value: unknown): value is string => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
 const digest = (value: unknown): value is string => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
@@ -20,7 +22,7 @@ const nullable = (value: unknown, max: number) => value === null || text(value, 
 const date = (value: unknown) => typeof value === 'string' && Number.isFinite(Date.parse(value));
 const url = (value: unknown) => { if (value === null) return true; try { const parsed = new URL(String(value)); return typeof value === 'string' && value.length <= 4096 && ['http:', 'https:'].includes(parsed.protocol) && !parsed.username && !parsed.password; } catch { return false; } };
 
-export function validateRow(table: TableName, row: Row) {
+export function validateRow(table: TableName, row: Row, registry = false) {
   if (!row || typeof row !== 'object' || Array.isArray(row)) throw new TransferError(`Некорректная запись ${table}`);
   const valid = table === 'products' ? uuid(row.id) && text(row.title, 300, true) && nullable(row.sku, 100) && text(row.description, 100000) && ['ready', 'processing'].includes(row.status) && (row.cover_asset_id === null || uuid(row.cover_asset_id)) && date(row.created_at) && date(row.updated_at) && nullable(row.image_url, 4096) && nullable(row.image_alt, 1000) && url(row.source_url)
     : table === 'categories' ? uuid(row.id) && text(row.name, 120, true) && text(row.slug, 100, true) && /^[a-z0-9]+(-[a-z0-9]+)*$/.test(row.slug) && (row.parent_id === null || uuid(row.parent_id))
@@ -31,7 +33,10 @@ export function validateRow(table: TableName, row: Row) {
     : uuid(row.id) && uuid(row.product_id) && ['image', 'model', 'archive', 'source', 'other'].includes(row.kind) && text(row.name, 300, true) && text(row.media_type, 200, true) && (row.size_bytes === null || typeof row.size_bytes === 'string' && /^\d{1,19}$/.test(row.size_bytes) && BigInt(row.size_bytes) <= 9223372036854775807n) && (row.sha256 === null || digest(row.sha256)) && nullable(row.version, 300) && date(row.created_at) && ['external', 'uploaded'].includes(row.origin) && url(row.external_url);
   if (!valid) throw new TransferError(`Некорректные поля ${table}`);
   if (table === 'products' && row.image_url !== null && !url(row.image_url) && !/^\/(?:api\/v1\/assets\/[0-9a-f-]+\/(?:content|thumbnail)|illustrations\/[a-z0-9-]+\.svg)$/.test(row.image_url)) throw new TransferError('Недопустимый URL изображения');
-  if (table === 'assets') {
+  if (table === 'assets' && registry) {
+    if ((row.file_id !== null && !uuid(row.file_id)) || (!!row.file_id === !!row.external_url) || !row.metadata || typeof row.metadata !== 'object' || Array.isArray(row.metadata) || (row.retired_at !== null && !date(row.retired_at))) throw new TransferError('Недопустимая связь файла');
+  }
+  if (table === 'assets' && !registry) {
     if (row.external_url) {
       if (row.archive_path !== null) throw new TransferError('Внешний ресурс не должен содержать архивный путь');
     } else {
@@ -74,7 +79,7 @@ export async function extractArchive(zipPath: string, destination: string, limit
       const name = safeRelativePath(entry.fileName);
       const fileType = (entry.externalFileAttributes >>> 16) & 0o170000;
       if ((fileType && fileType !== 0o100000) || entry.isEncrypted() || seen.has(name)) throw new TransferError('Ссылки, каталоги, шифрование и повторные пути запрещены');
-      if (!(name === 'manifest.json' || TABLES.some(table => name === `${table}.ndjson`) || /^files\/[0-9a-f-]{36}\/[^/]+$/i.test(name))) throw new TransferError('Неизвестный файл в архиве');
+      if (!(name === 'manifest.json' || [...TABLES,'storage_files','import_sources','storage_operations','storage_matches','storage_events'].some(table => name === `${table}.ndjson`) || /^files\/[0-9a-f-]{36}\/[^/]+$/i.test(name))) throw new TransferError('Неизвестный файл в архиве');
       seen.add(name);
       total += entry.uncompressedSize;
       if (!Number.isSafeInteger(total) || total > limit || (!name.startsWith('files/') && entry.uncompressedSize > 256 * 1024 ** 2) || (name === 'manifest.json' && entry.uncompressedSize > 1024 * 1024)) throw new TransferError('Архив превышает разрешённый размер');
@@ -93,7 +98,8 @@ export async function extractArchive(zipPath: string, destination: string, limit
 export async function validateArchive(directory: string, entries: Set<string>, check: () => void): Promise<Manifest> {
   let manifest: Manifest;
   try { manifest = JSON.parse(await readFile(join(directory, 'manifest.json'), 'utf8')); } catch { throw new TransferError('Не найден корректный manifest.json'); }
-  if (manifest.format !== 'donarium' || manifest.version !== FORMAT_VERSION || !manifest.tables) throw new TransferError('Неподдерживаемая версия формата DONARIUM');
+  if (manifest.version === 2) return validateRegistryArchive(directory, entries, check);
+  if (manifest.format !== 'donarium' || manifest.version !== LEGACY_FORMAT_VERSION || !manifest.tables) throw new TransferError('Неподдерживаемая версия формата DONARIUM');
   const ids = new Map<TableName, Set<string>>();
   for (const table of TABLES) {
     check();

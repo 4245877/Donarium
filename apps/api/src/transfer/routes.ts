@@ -12,6 +12,7 @@ export async function registerTransferRoutes(app: FastifyInstance, pool: Pool, c
   const params = { type: 'object', additionalProperties: false, required: ['id'], properties: { id: { type: 'string', format: 'uuid' } } };
   app.get('/api/v1/exports/catalog.json', async (_request, reply) => reply.type('application/json; charset=utf-8').header('Content-Disposition', 'attachment; filename="donarium-catalog.json"').send(Readable.from(service.json())));
   app.get('/api/v1/exports/catalog.csv', async (_request, reply) => reply.type('text/csv; charset=utf-8').header('Content-Disposition', 'attachment; filename="donarium-catalog.csv"').send(Readable.from(service.csvRows())));
+  app.post('/api/v1/exports/metadata', async (_request, reply) => { if (!config.managedRoot || !config.workRoot) await service.init(); return reply.code(202).send(await service.startExport('metadata')); });
   app.post('/api/v1/exports/archive', async (_request, reply) => { if (!config.managedRoot || !config.workRoot) await service.init(); return reply.code(202).send(await service.startExport()); });
   app.get<{ Params: { id: string } }>('/api/v1/transfers/:id', { schema: { params } }, async request => service.get(request.params.id));
   app.get<{ Params: { id: string } }>('/api/v1/transfers/:id/download', { schema: { params } }, async (request, reply) => reply.type('application/zip').header('Content-Disposition', 'attachment; filename="donarium-library.zip"').send(createReadStream(service.download(request.params.id))));
@@ -22,7 +23,7 @@ export async function registerTransferRoutes(app: FastifyInstance, pool: Pool, c
   }, async (request, reply) => reply.code(202).send(await service.confirm(request.params.id, request.body.conflict)));
   await app.register(async uploads => {
     uploads.addContentTypeParser('application/octet-stream', (_request, payload, done) => done(null, payload));
-    uploads.put<{ Body: Readable }>('/api/v1/restores/preview', { bodyLimit: config.maxArchiveBytes ?? 2 * 1024 ** 4 }, async (request, reply) => { if (!config.managedRoot || !config.workRoot) await service.init(); return reply.code(202).send(await service.upload(request.body)); });
+    uploads.put<{ Body: Readable }>('/api/v1/restores/preview', { bodyLimit: service.transferLimit }, async (request, reply) => { if (!config.managedRoot || !config.workRoot) await service.init(); return reply.code(202).send(await service.upload(request.body)); });
   });
   return service;
 }

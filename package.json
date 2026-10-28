@@ -15,7 +15,7 @@
     "build": "npm run build -w @donarium/shared && npm run build -w @donarium/web && npm run build -w @donarium/api",
     "start": "npm run start -w @donarium/api",
     "typecheck": "npm run typecheck --workspaces --if-present && tsc -p tsconfig.scripts.json",
-    "test": "node --import tsx tests/api.test.ts && node --import tsx tests/auth.test.ts && node --import tsx tests/storage.test.ts && node --import tsx tests/transfer.test.ts && node --import tsx tests/postgres.integration.test.ts && node --import tsx tests/catalog.integration.test.ts && node --import tsx tests/storage.integration.test.ts && node --import tsx tests/portability.integration.test.ts && node --import tsx tests/portability-recovery.integration.test.ts",
+    "test": "node --import tsx tests/api.test.ts && node --import tsx tests/auth.test.ts && node --import tsx tests/storage.test.ts && node --import tsx tests/transfer.test.ts && node --import tsx tests/postgres.integration.test.ts && node --import tsx tests/catalog.integration.test.ts && node --import tsx tests/storage.integration.test.ts && node --import tsx tests/portability.integration.test.ts && node --import tsx tests/portability-recovery.integration.test.ts && node --import tsx tests/registry.integration.test.ts",
     "test:e2e": "playwright test",
     "db:migrate": "tsx scripts/migrate.ts",
     "db:seed": "tsx scripts/seed-demo.ts",

@@ -1,0 +1,18 @@
+# miha: restrict the published Donarium port BEFORE Docker DNAT and UFW.
+# Update these addresses/interface when moving this deployment to another host.
+# Only this table is replaced; Docker, Tailscale and UFW tables stay intact.
+add table inet donarium_4180
+flush table inet donarium_4180
+table inet donarium_4180 {
+    chain allowed_ingress {
+        iifname "lo" counter return comment "server-local traffic"
+        iifname "eno1" ip saddr 192.168.0.0/24 ip daddr 192.168.0.151 counter return comment "Donarium LAN"
+        iifname "tailscale0" ip saddr 100.64.0.0/10 ip daddr 100.91.30.10 counter return comment "Donarium Tailscale"
+        counter drop comment "block other ingress to Donarium"
+    }
+
+    chain before_docker_dnat {
+        type filter hook prerouting priority -110; policy accept;
+        fib daddr type local tcp dport 4180 jump allowed_ingress
+    }
+}

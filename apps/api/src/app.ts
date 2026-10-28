@@ -57,7 +57,7 @@ export async function buildApp(options: AppOptions = {}): Promise<FastifyInstanc
     }
     if ('code' in error && error.code === '23505') return reply.code(409).send({ error: { code: 'CONFLICT', message: 'Такая запись или SKU уже существует', requestId: request.id } });
     if ('code' in error && ['23503', '23514', '22P02'].includes(error.code ?? '')) return reply.code(400).send({ error: { code: 'INVALID_REFERENCE', message: 'Проверьте поля и связанные записи', requestId: request.id } });
-    if (error.statusCode && error.statusCode >= 400 && error.statusCode < 500) {
+    if (error.statusCode && error.statusCode >= 400 && error.statusCode <= 599) {
       return reply.code(error.statusCode).send({ error: { code: 'BAD_REQUEST', message: error.name === 'StorageError' || error.constructor.name === 'StorageError' || error.constructor.name === 'CatalogInputError' || error.constructor.name === 'TransferError' ? error.message : 'Некорректный запрос', requestId: request.id } });
     }
     // Do not serialize DB errors, URLs, credentials or filesystem paths to logs/responses.
@@ -108,6 +108,7 @@ export async function buildApp(options: AppOptions = {}): Promise<FastifyInstanc
     app.get('/system', sendApp);
     app.get('/import', sendApp);
     app.get('/transfer', sendApp);
+    app.get('/files', sendApp);
     app.get('/catalog/new', sendApp);
     app.get('/settings', sendApp);
     app.get('/catalog/:id/edit', sendApp);

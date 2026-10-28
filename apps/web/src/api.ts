@@ -31,3 +31,7 @@ export function externalUrl(value: string | null): string | undefined {
   try { const url = new URL(value); return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password ? url.href : undefined; } catch { return undefined; }
 }
 export const message = (error: unknown) => error instanceof Error ? error.message : 'Операция не выполнена';
+
+export function isGoogleDrive(value: string | null): boolean {
+  try { return !!value && ['drive.google.com','docs.google.com'].includes(new URL(value).hostname); } catch { return false; }
+}

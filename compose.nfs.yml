@@ -1,0 +1,29 @@
+# Explicit production override, enabled only after backup verification and approval.
+services:
+  app:
+    image: ${DONARIUM_STORAGE_IMAGE:-donarium-storage:20261027}
+    environment:
+      MANAGED_STORAGE_ROOT: /app/var/uploads
+      WORK_ROOT: /app/var/work
+      STORAGE_ROOTS: '[{"key":"LIBRARY","name":"Архивы моделей","path":"/app/storage/library"},{"key":"INVENTORY","name":"Описи и контрольные суммы","path":"/app/storage/inventory","internal":true}]'
+      STORAGE_REQUIRE_GUARDS: 'true'
+      STORAGE_GUARDS: '[{"path":"/app/var/uploads","source":"192.168.0.141:/uploads","marker":".donarium-volume","value":"donarium:76d90fb2-6d59-4fdb-8280-81154e6c93d9:uploads"},{"path":"/app/var/work","source":"192.168.0.141:/work","marker":".donarium-volume","value":"donarium:76d90fb2-6d59-4fdb-8280-81154e6c93d9:work"},{"path":"/app/storage/library","source":"192.168.0.141:/library","marker":".donarium-volume","value":"donarium:76d90fb2-6d59-4fdb-8280-81154e6c93d9:library"},{"path":"/app/storage/inventory","source":"192.168.0.141:/inventory","marker":".donarium-volume","value":"donarium:76d90fb2-6d59-4fdb-8280-81154e6c93d9:inventory"}]'
+    volumes:
+      - type: bind
+        source: /mnt/donarium/uploads
+        target: /app/var/uploads
+        bind: {create_host_path: false}
+      - type: bind
+        source: /mnt/donarium/work
+        target: /app/var/work
+        bind: {create_host_path: false}
+      - type: bind
+        source: /mnt/donarium/library
+        target: /app/storage/library
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: /mnt/donarium/inventory
+        target: /app/storage/inventory
+        read_only: true
+        bind: {create_host_path: false}

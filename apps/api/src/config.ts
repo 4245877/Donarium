@@ -3,7 +3,8 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { DataMode } from '@donarium/shared';
 
-export interface StorageRootConfig { key: string; name: string; path: string; writable?: boolean }
+export interface StorageRootConfig { key: string; name: string; path: string; writable?: boolean; internal?: boolean }
+export interface StorageGuard { path: string; source: string; marker: string; value: string }
 
 export interface Config {
   host: string;
@@ -18,6 +19,8 @@ export interface Config {
   workRoot?: string;
   maxUploadBytes?: number;
   maxArchiveBytes?: number;
+  storageGuards?: StorageGuard[];
+  requireStorageGuards?: boolean;
   adminPassword?: string;
   secureCookie?: boolean;
 }
@@ -52,7 +55,7 @@ export function loadConfig(): Config {
     if (!Array.isArray(value) || value.length > 32) throw new Error('STORAGE_ROOTS must be an array of at most 32 roots');
     storageRoots = value.map(item => {
       if (!item || typeof item !== 'object' || !/^[A-Z][A-Z0-9_]{0,63}$/.test(item.key) || item.key === 'DONARIUM_UPLOADS' || typeof item.name !== 'string' || !item.name.trim() || item.name.length > 120 || typeof item.path !== 'string' || !item.path.startsWith('/')) throw new Error('Invalid STORAGE_ROOTS entry');
-      return { key: item.key, name: item.name, path: resolve(item.path), writable: false };
+      return { key: item.key, name: item.name, path: resolve(item.path), writable: false, internal: item.internal === true };
     });
     if (new Set(storageRoots.map(root => root.key)).size !== storageRoots.length) throw new Error('Duplicate STORAGE_ROOTS key');
   } else if (env.STORAGE_ROOT) {
@@ -63,6 +66,15 @@ export function loadConfig(): Config {
     if (!Number.isSafeInteger(value) || value < 1024 || value > 10 * 1024 ** 4) throw new Error(`${key} must be a safe positive byte limit`);
     return value;
   };
+  let storageGuards: StorageGuard[] = [];
+  if (env.STORAGE_GUARDS) {
+    const parsed = JSON.parse(env.STORAGE_GUARDS);
+    if (!Array.isArray(parsed) || parsed.length > 34) throw new Error('Invalid STORAGE_GUARDS');
+    storageGuards = parsed.map(g => {
+      if (!g || typeof g.path !== 'string' || !g.path.startsWith('/') || typeof g.source !== 'string' || !g.source || typeof g.marker !== 'string' || !/^[a-zA-Z0-9._-]+$/.test(g.marker) || typeof g.value !== 'string' || !g.value) throw new Error('Invalid STORAGE_GUARDS entry');
+      return { path: resolve(g.path), source: g.source, marker: g.marker, value: g.value };
+    });
+  }
   return {
     host: env.HOST || '127.0.0.1',
     port,
@@ -76,6 +88,7 @@ export function loadConfig(): Config {
     workRoot: resolve(projectRoot, env.WORK_ROOT || 'var/work'),
     maxUploadBytes: positiveLimit('MAX_UPLOAD_BYTES', 20 * 1024 ** 3),
     maxArchiveBytes: positiveLimit('MAX_ARCHIVE_BYTES', 2 * 1024 ** 4),
+    storageGuards, requireStorageGuards: env.STORAGE_REQUIRE_GUARDS === 'true',
     adminPassword,
     secureCookie: env.SECURE_COOKIE === 'true',
   };

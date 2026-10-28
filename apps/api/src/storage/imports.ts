@@ -3,6 +3,7 @@ import { readdir } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
 import { fileMetadata, safeRelativePath, StorageError, StorageService } from './service.js';
+import { registerFile } from './registry.js';
 
 export interface FolderCandidate {
   path: string; title: string; files: number; cover: string | null; existingProductId: string | null;
@@ -26,23 +27,13 @@ export async function storageId(pool: Pick<Pool, 'query'>, service: StorageServi
 }
 export async function linkFile(client: Pick<PoolClient, 'query'>, service: StorageService, productId: string,
   key: string, path: string, origin = 'external', checksum: string | null = null) {
-  const file = await service.open(key, path);
-  try {
-    const location = await storageId(client, service, key);
-    const name = basename(path);
-    const metadata = fileMetadata(name);
-    const result = await client.query<{ id: string; inserted: boolean }>(`INSERT INTO assets
-      (product_id,kind,name,media_type,size_bytes,sha256,storage_id,relative_path,origin)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)
-      ON CONFLICT(product_id,storage_id,relative_path) WHERE storage_id IS NOT NULL DO UPDATE
-      SET size_bytes=EXCLUDED.size_bytes, media_type=EXCLUDED.media_type,
-      sha256=CASE WHEN assets.size_bytes IS DISTINCT FROM EXCLUDED.size_bytes THEN EXCLUDED.sha256 ELSE assets.sha256 END
-      WHERE assets.size_bytes IS DISTINCT FROM EXCLUDED.size_bytes OR assets.media_type IS DISTINCT FROM EXCLUDED.media_type
-      RETURNING id,(xmax=0) AS inserted`,
-    [productId, metadata.kind, name, metadata.mediaType, String(file.stat.size), checksum, location, path, origin]);
-    if (result.rowCount) await client.query('UPDATE products SET updated_at=now() WHERE id=$1', [productId]);
-    return result.rows[0]?.inserted ? result.rows[0].id : null;
-  } finally { await file.handle.close(); }
+  await client.query('SELECT id FROM products WHERE id=$1 FOR UPDATE',[productId]);
+  const file = await registerFile(client, service, key, path, checksum ? { sha256: checksum } : {});
+  const result = await client.query<{ id: string }>(`INSERT INTO assets
+    (product_id,file_id,kind,name,media_type,origin) VALUES($1,$2,$3,$4,$5,$6)
+    ON CONFLICT DO NOTHING RETURNING id`, [productId,file.id,file.kind,file.name,file.media_type,origin]);
+  if(result.rowCount) await client.query('UPDATE products SET updated_at=now() WHERE id=$1',[productId]);
+  return result.rows[0]?.id ?? null;
 }
 
 /** Existing direct file links are authoritative only when they identify exactly one card.

@@ -105,8 +105,8 @@ test('real files folder import archive export and restore through the interface'
   const originalTotal = (await beforeRestore.json()).total as number;
   expect(originalTotal).toBeGreaterThan(0);
   await page.getByRole('button',{name:'Подготовить полный архив'}).click();
-  await expect(page.getByRole('link',{name:'Скачать полный архив'})).toBeVisible({timeout:30000});
-  const [archive]=await Promise.all([page.waitForEvent('download'),page.getByRole('link',{name:'Скачать полный архив'}).click()]);
+  await expect(page.getByRole('link',{name:'Скачать архив'})).toBeVisible({timeout:30000});
+  const [archive]=await Promise.all([page.waitForEvent('download'),page.getByRole('link',{name:'Скачать архив'}).click()]);
   expect(await archive.failure()).toBeNull();
   const archivePath=await archive.path();
   expect(archivePath).toBeTruthy();

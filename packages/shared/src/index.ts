@@ -1,4 +1,4 @@
-export const APP_VERSION = '0.2.0';
+export const APP_VERSION = '0.3.0';
 export type DataMode = 'demo' | 'postgres';
 export interface Category { id: string; slug: string; name: string }
 export interface ProductImage { url: string; alt: string }
@@ -15,6 +15,7 @@ export interface ProductSummary {
   assetCount: number; createdAt: string; updatedAt: string;
 }
 export interface Asset {
+  fileId?: string | null; fileStatus?: string | null; format?: string;
   id: string; kind: 'image' | 'model' | 'archive' | 'source' | 'other';
   name: string; mediaType: string; sizeBytes: string | null; sha256: string | null;
   version: string | null; storageId: string | null; relativePath: string | null;

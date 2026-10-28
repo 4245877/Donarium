@@ -24,7 +24,11 @@ try {
  const external=join(directory,'external'); await mkdir(join(external,'Example Model'),{recursive:true});
  await writeFile(join(external,'Example Model','part.stl'),'solid browser_fixture\nendsolid browser_fixture\n');
  await writeFile(join(external,'Example Model','cover.png'),Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=','base64'));
- const app=await buildApp({pool,logger:false,config:{host:'127.0.0.1',port,dataMode:'postgres',databaseUrl,adminPassword:password,logLevel:'silent',staticDir:resolve('apps/web/dist'),managedRoot:join(directory,'uploads'),workRoot:join(directory,'work'),storageRoots:[{key:'FIXTURES',name:'Browser fixtures',path:external}],maxUploadBytes:32*1024*1024,maxArchiveBytes:128*1024*1024}});
+ const matching=join(directory,'matching');await mkdir(matching);
+ await writeFile(join(matching,'Match-Model.rar'),'isolated matching fixture');
+ const matchProduct=(await pool.query("INSERT INTO products(sku,title) VALUES('QA-MATCH','Matching fixture') RETURNING id")).rows[0].id;
+ await pool.query("INSERT INTO external_links(product_id,system,external_id,metadata) VALUES($1::uuid,'notion',$1::text,$2)",[matchProduct,{source_fields:{'Имя STL/ZIP-файла':'Match_Model'}}]);
+ const app=await buildApp({pool,logger:false,config:{host:'127.0.0.1',port,dataMode:'postgres',databaseUrl,adminPassword:password,logLevel:'silent',staticDir:resolve('apps/web/dist'),managedRoot:join(directory,'uploads'),workRoot:join(directory,'work'),storageRoots:[{key:'FIXTURES',name:'Browser fixtures',path:external},{key:'MATCH_FIXTURES',name:'Matching fixtures',path:matching}],maxUploadBytes:32*1024*1024,maxArchiveBytes:128*1024*1024}});
  const close=async()=>{if(closing)return;closing=true;await app.close();await pool.end();await admin.query(`DROP SCHEMA ${schema} CASCADE`);await admin.end();await rm(directory,{recursive:true,force:true});process.exit(0);};
  process.on('SIGINT',()=>{void close();});process.on('SIGTERM',()=>{void close();});
  await app.listen({host:'127.0.0.1',port});console.log(`Isolated browser QA ready at http://127.0.0.1:${port}`);

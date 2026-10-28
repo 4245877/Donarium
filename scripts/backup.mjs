@@ -4,6 +4,7 @@ import { chmod, mkdir, realpath, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { pipeline } from 'node:stream/promises';
+import { backupRoots, usesNfs, assertNfsBackupRoots, assertBackupDestination } from './backup-storage.mjs';
 
 if (existsSync('.env')) process.loadEnvFile('.env');
 function execute(command, args, env = {}) {
@@ -47,10 +48,7 @@ try {
   const requested = resolve(process.argv[2] || `donarium-backup-${new Date().toISOString().replace(/[:.]/g, '-')}`);
   // Resolve the existing parent so a symlink cannot put a backup inside its source tree.
   const destination = resolve(await realpath(dirname(requested)), basename(requested));
-  const backupRoots = process.env.BACKUP_STORAGE_ROOTS || process.env.STORAGE_ROOTS;
-  let configured = backupRoots ? JSON.parse(backupRoots) : process.env.STORAGE_ROOT ? [{ key: 'LIBRARY', path: process.env.STORAGE_ROOT }] : [];
-  if (!Array.isArray(configured)) throw new Error('STORAGE_ROOTS must be a JSON array');
-  configured = [...configured, { key: 'DONARIUM_UPLOADS', path: process.env.MANAGED_STORAGE_ROOT || 'var/uploads' }];
+  const configured = backupRoots(process.env);
   const keys = new Set();
   const roots = [];
   for (const entry of configured) {
@@ -61,6 +59,10 @@ try {
     if (child === '' || (!child.startsWith(`..${sep}`) && child !== '..' && !isAbsolute(child))) throw new Error('Backup destination must be outside every storage root');
     roots.push({ key: entry.key, path });
   }
+  if (usesNfs(process.env)) await assertNfsBackupRoots(roots);
+  await assertBackupDestination(dirname(destination), roots);
+  // Archive files must never have a world-readable interval while tar writes them.
+  process.umask(0o077);
   await mkdir(destination, { mode: 0o700 }); // Never overwrite an existing backup.
   const files = [];
   const databaseFile = resolve(destination, 'database.dump');
@@ -76,10 +78,12 @@ try {
   files.push({ file: 'database.dump', sha256: await checksum(databaseFile) });
   const storage = [];
   for (const root of roots) {
+    if (usesNfs(process.env)) await assertNfsBackupRoots(roots);
     const file = `storage-${root.key}.tar`;
     const path = resolve(destination, file);
     // tar preserves relative names and symlinks without following links or changing originals.
     await execute('tar', ['--create', '--file', path, '--directory', root.path, '--', '.']);
+    if (usesNfs(process.env)) await assertNfsBackupRoots(roots);
     await chmod(path, 0o600);
     files.push({ file, sha256: await checksum(path) });
     storage.push({ key: root.key, originalPath: root.path, archive: file });

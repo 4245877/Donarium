@@ -8,26 +8,30 @@
 
 Для библиотеки 394 ГиБ сохраняйте отдельно PostgreSQL custom dump и **ZIP метаданных v2** («Экспорт и восстановление» → «Метаданные ZIP для восстановления»). Файлы копируйте на другой физический диск/сервер; не создавайте полный tar/ZIP библиотеки на системном диске .151 или дополнительную распакованную копию на .141. Полный ZIP приложения ограничен 4 ГиБ.
 
-Нативный `scripts/backup.mjs` ниже создаёт tar настроенных корней и пригоден только при достаточном месте на выбранном независимом назначении. Он не вычисляет автоматически контейнерные STORAGE_ROOTS из Compose: для включения library явно задайте BACKUP_STORAGE_ROOTS с host-путями. Backup только uploads не включает 607 архивов библиотеки. Для большой библиотеки используйте отдельное файловое резервирование с описью SHA-256, как в [LOCAL_STORAGE.md](LOCAL_STORAGE.md).
+Нативный `scripts/backup.mjs` создаёт tar настроенных корней. При `COMPOSE_FILE`, включающем `compose.nfs.yml`, он автоматически берёт host-каталоги library/inventory рядом с MANAGED_STORAGE_ROOT и сами uploads; пустой `STORAGE_ROOTS=[]` больше не исключает библиотеку. Для нестандартных путей задайте `BACKUP_STORAGE_ROOTS` с ключами LIBRARY/INVENTORY и путями хоста. Перед копированием проверяются NFS source и маркер UUID диска; локальный каталог не заменяет отсутствующий NFS.
 
-Перед backup проверьте фактические sources четырёх NFS mounts. Для остановки/запуска текущего app используйте `sudo systemctl stop donarium.service` и `sudo systemctl start donarium.service`; NFS override сохраняется. После восстановления сначала проверяйте отдельную БД, UUID реестра, связи и целостность оригиналов. Восстановление старого dump поверх текущих пользовательских правок для отката релиза не используется.
+Полный backup отклоняется до создания dump/tar, если назначение находится на системной ФС, на ФС исходников, в tmpfs/overlay либо на том же NFS-сервере. Эти проверки не определяют, находятся ли разные локальные разделы на одном физическом диске: независимость носителя проверьте отдельно через `lsblk`. Нужны постоянный отдельный носитель и достаточное место. Для большой библиотеки предпочтительно инкрементальное файловое резервирование с описью SHA-256 из [LOCAL_STORAGE.md](LOCAL_STORAGE.md); полный tar повторно читает и сохраняет все файлы.
+
+Перед backup проверьте фактические sources четырёх NFS mounts. Для обслуживания даже при ожидающих mount jobs используйте `sudo systemctl disable --now donarium.service`, после обслуживания — `sudo systemctl enable --now donarium.service`. Это выключает recovery до явного возобновления. При здоровом NFS достаточно обычных stop/start. После восстановления сначала проверяйте отдельную БД, UUID реестра, связи и целостность оригиналов. Восстановление старого dump поверх текущих пользовательских правок для отката релиза не используется.
 
 ## Создание копии
 
-Нужны Node.js 22+, GNU tar и PostgreSQL `pg_dump` версии не ниже сервера. Для Docker-установки можно использовать `pg_dump` уже установленный в контейнере PostgreSQL. В `.env` должны быть заданы `DATABASE_URL`, `STORAGE_ROOTS` (или `STORAGE_ROOT`) и `MANAGED_STORAGE_ROOT`.
+Нужны Node.js 22+, GNU tar, Linux findmnt и PostgreSQL `pg_dump` версии не ниже сервера. Для Docker-установки можно использовать `pg_dump` уже установленный в контейнере PostgreSQL. Скрипт запускается на хосте. В `.env` должны быть заданы `DATABASE_URL`, корни файлов и `MANAGED_STORAGE_ROOT`; для текущего NFS корни выбираются автоматически, как описано выше.
 
 Перед копированием остановите DONARIUM и программы, изменяющие подключённые каталоги: иначе дамп БД и файлы могут представлять разные моменты времени. Два явных флага подтверждают выбранную библиотеку и остановку записи. Скрипт принимает только БД с именем `donarium` или `donarium_<suffix>`.
 
 Docker, из корня checkout:
 
 ```bash
-sudo systemctl stop donarium.service
+sudo systemctl disable --now donarium.service
+# /srv/backups должен быть УЖЕ подключённым независимым носителем.
+findmnt --mountpoint /srv/backups
 mkdir -p /srv/backups/donarium
 BACKUP_CONFIRM=donarium BACKUP_QUIESCED=donarium \
   BACKUP_DB_CONTAINER="$(docker compose -f compose.yml -f compose.postgres.yml ps -q db)" \
-  node scripts/backup.mjs /srv/backups/donarium/2026-10-24
+  node scripts/backup.mjs /srv/backups/donarium/2026-10-28
 # Возобновляйте запись только после сообщения Backup complete.
-sudo systemctl start donarium.service
+sudo systemctl enable --now donarium.service
 ```
 
 Для установленного на хосте PostgreSQL используйте тот же скрипт без `BACKUP_DB_CONTAINER`. Если `DATABASE_URL` содержит Docker-hostname `db`, для клиента на хосте задайте `BACKUP_DATABASE_URL` с адресом `127.0.0.1:5548`. Скрипт не выводит URL и пароли. Если `STORAGE_ROOTS` содержит контейнерные пути (например `/library/models`), задайте `BACKUP_STORAGE_ROOTS` с теми же ключами и настоящими путями хоста (например `[{"key":"MODELS","path":"/mnt/models"}]`). Управляемый корень для backup берётся из хостового `MANAGED_STORAGE_ROOT`, по умолчанию `var/uploads`.
@@ -35,11 +39,12 @@ sudo systemctl start donarium.service
 Каталог назначения должен быть новым, его родитель должен существовать. Он должен находиться вне всех корней библиотеки. Получится:
 
 ```text
-2026-10-24/
+2026-10-28/
   backup.json
   database.dump
   storage-DONARIUM_UPLOADS.tar
   storage-LIBRARY.tar             # отдельный tar на каждый настроенный корень
+  storage-INVENTORY.tar           # описи SHA-256 текущей NFS-установки
 ```
 
 `backup.json` содержит версию, исходные пути корней и SHA-256 каждого файла копии; секретов `.env` в нём нет. Каталог создаётся с правами `0700`, файлы — `0600`. Храните настройки и пароль владельца отдельно: они не включены в копию. Скрипт не следует символическим ссылкам при архивации. Незавершённая копия остаётся в созданном каталоге без финального `backup.json` и не считается пригодной к восстановлению.
@@ -69,22 +74,26 @@ JS
 
 Сначала проверьте SHA-256. Восстанавливайте только доверенную собственную резервную копию, в новую пустую БД и пустые файловые каталоги. Команды ниже не очищают существующую БД.
 
-Docker PostgreSQL из этого проекта, пример нового имени БД:
+Docker PostgreSQL из этого проекта, пример нового имени БД. До распаковки проверьте, что /srv/donarium-restored расположен на подключённом диске данных, а не на системной ФС:
 
 ```bash
 docker compose -f compose.yml -f compose.postgres.yml exec -T db \
-  createdb -U donarium donarium_restore_20261024
+  createdb -U donarium donarium_restore_20261028
 docker compose -f compose.yml -f compose.postgres.yml exec -T db \
-  pg_restore -U donarium --no-owner --no-acl -d donarium_restore_20261024 \
-  < /srv/backups/donarium/2026-10-24/database.dump
+  pg_restore -U donarium --no-owner --no-acl -d donarium_restore_20261028 \
+  < /srv/backups/donarium/2026-10-28/database.dump
 mkdir -p /srv/donarium-restored/uploads /srv/donarium-restored/library
-tar -xf /srv/backups/donarium/2026-10-24/storage-DONARIUM_UPLOADS.tar -C /srv/donarium-restored/uploads
-tar -xf /srv/backups/donarium/2026-10-24/storage-LIBRARY.tar -C /srv/donarium-restored/library
+tar -xf /srv/backups/donarium/2026-10-28/storage-DONARIUM_UPLOADS.tar -C /srv/donarium-restored/uploads
+tar -xf /srv/backups/donarium/2026-10-28/storage-LIBRARY.tar -C /srv/donarium-restored/library
 ```
 
-Для PostgreSQL на хосте: `createdb donarium_restore_20261024`, затем `pg_restore --no-owner --no-acl -d donarium_restore_20261024 /path/database.dump`; параметры подключения задайте переменными `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`.
+Для PostgreSQL на хосте: `createdb donarium_restore_20261028`, затем `pg_restore --no-owner --no-acl -d donarium_restore_20261028 /path/database.dump`; параметры подключения задайте переменными `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`.
 
 В настройках изолированной установки укажите URL новой БД, `MANAGED_STORAGE_ROOT=/srv/donarium-restored/uploads` и корни с прежними **ключами** (`LIBRARY` в примере), но новыми физическими путями. При Docker-запуске смонтируйте соответствующие каталоги. Владельцем загруженного хранилища должен быть пользователь процесса DONARIUM. После восстановления запустите миграции текущей версии, затем приложение и проверьте каталог, обложки и скачивание. Переключать рабочую установку на восстановленную БД следует только после этой проверки.
+
+Каталоги распаковки выше также должны находиться на диске данных. Перед `mkdir`/`tar` проверьте `findmnt -T /srv/donarium-restored` и UUID назначения; на системный диск библиотеку не распаковывайте. Для INVENTORY извлеките его tar в отдельный каталог того же диска. Если переносится тот же .141, повторная распаковка оригиналов не нужна: подключите его NFS-корни и восстановите только метаданные. Порядок смены клиентского IP и guards приведён в LOCAL_STORAGE.md.
+
+28 октября после перехода на NFS свежий custom dump (987683 байта) восстановлен в отдельную тестовую БД: восемь таблиц, включая 598 товаров, 2416 assets, 2427 файлов и 598 сопоставлений, совпали полностью. Свежий metadata ZIP (970019 байт) отдельно восстановлен без оригиналов; UUID, пути, SHA-256 и связи сохранены. Все 1820 uploads заново проверены по SHA-256 на .141. Доказательства находятся в `var/qa/storage-final-20261028/`; это проверки восстановления метаданных и файлов, а не независимая копия всей библиотеки.
 
 ## Изолированное интеграционное окружение
 

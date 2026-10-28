@@ -21,3 +21,27 @@ test('registry UI uploads once, reuses files on cards, replaces and unlinks with
   await page.screenshot({path:'var/qa/storage-files-desktop.png',fullPage:true});await page.setViewportSize({width:390,height:844});await expect(page.locator('.registry-row')).toBeVisible();expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);await page.screenshot({path:'var/qa/storage-files-mobile.png',fullPage:true});
  }finally{await page.request.delete(`/api/v1/products/${a.id}`);await page.request.delete(`/api/v1/products/${b.id}`);}
 });
+
+test('matching UI requires confirmation before applying an archive to a product',async({page})=> {
+ test.skip(process.env.E2E_WRITE!=='donarium_test'||!process.env.E2E_PASSWORD,'Requires isolated QA installation');test.setTimeout(60000);
+ expect((await page.request.post('/api/v1/auth/login',{data:{password:process.env.E2E_PASSWORD}})).ok()).toBe(true);
+ const start=await page.request.post('/api/v1/files/inventory',{data:{root:'MATCH_FIXTURES'}});expect(start.status()).toBe(202);
+ const waitJob=async(id:string)=>{await expect.poll(async()=> (await (await page.request.get(`/api/v1/storage/operations/${id}`)).json()).status).toBe('completed');};
+ await waitJob((await start.json()).jobId);
+ const verify=await page.request.post('/api/v1/files/verify',{data:{root:'MATCH_FIXTURES'}});await waitJob((await verify.json()).jobId);
+ await page.goto('/files');await page.getByRole('combobox',{name:'Хранилище',exact:true}).selectOption('MATCH_FIXTURES');
+ await page.getByRole('button',{name:'Сопоставление товаров',exact:true}).click();
+ const preview=page.waitForResponse(r=>r.url().endsWith('/storage/matches/preview')&&r.request().method()==='POST');
+ await page.getByRole('button',{name:'Подготовить соответствия',exact:true}).click();await waitJob((await (await preview).json()).jobId);
+ await page.getByRole('button',{name:'Обновить',exact:true}).click();
+ const row=page.locator('.match-row').filter({has:page.getByRole('link',{name:'Matching fixture',exact:true})});
+ await expect(row).toContainText('normalized');await expect(row).toContainText('pending');
+ await expect(page.getByRole('button',{name:'Применить подтверждённые (0)',exact:true})).toBeDisabled();
+ await row.getByRole('button',{name:'Подтвердить этот архив',exact:true}).click();
+ await page.getByRole('combobox',{name:'Состояние',exact:true}).selectOption('confirmed');
+ await row.getByLabel('Применить Matching fixture',{exact:true}).check();
+ const applied=page.waitForResponse(r=>r.url().endsWith('/storage/matches/apply')&&r.request().method()==='POST');
+ await page.getByRole('button',{name:'Применить подтверждённые (1)',exact:true}).click();await waitJob((await (await applied).json()).jobId);
+ await page.getByRole('combobox',{name:'Состояние',exact:true}).selectOption('applied');await row.getByRole('link',{name:'Matching fixture',exact:true}).click();
+ await expect(page.getByRole('heading',{name:'Match-Model.rar',exact:true})).toBeVisible();
+});

@@ -2,6 +2,7 @@
 Description=Retry Donarium after an unavailable NFS server
 Wants=network-online.target
 After=network-online.target
+PartOf=donarium.service
 StartLimitIntervalSec=0
 
 [Service]

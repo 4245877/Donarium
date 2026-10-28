@@ -1,6 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Pool } from 'pg';
-import { extname } from 'node:path';
 import { Readable } from 'node:stream';
 import sharp from 'sharp';
 import { ZipFile } from 'yazl';

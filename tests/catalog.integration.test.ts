@@ -70,6 +70,8 @@ test('catalog: failed metadata edit is atomic, duplicate SKU is rejected, cover 
     await assert.rejects(repository.update(second.id, { title: second.title, coverAssetId: image.rows[0]!.id }), CatalogInputError);
     const withCover = await repository.update(first.id, { title: first.title, coverAssetId: image.rows[0]!.id });
     assert.equal(withCover?.image?.url, `/api/v1/assets/${image.rows[0]!.id}/thumbnail`);
+    await pool.query('UPDATE assets SET retired_at=now() WHERE id=$1', [image.rows[0]!.id]);
+    await assert.rejects(repository.update(first.id, { title: first.title, coverAssetId: image.rows[0]!.id }), CatalogInputError, 'Retired images cannot be selected as a live cover');
     await pool.query('DELETE FROM assets WHERE id=$1', [image.rows[0]!.id]);
     assert.equal((await repository.get(first.id))?.coverAssetId, null);
   } finally {

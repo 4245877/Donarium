@@ -12,6 +12,7 @@ import { StorageService, StorageError } from '../apps/api/src/storage/service.js
 import { FileRegistry, registerFile } from '../apps/api/src/storage/registry.js';
 import { StorageJobs } from '../apps/api/src/storage/jobs.js';
 import { LibraryMatching, chooseMatches } from '../apps/api/src/storage/matching.js';
+import { FolderImports } from '../apps/api/src/storage/imports.js';
 
 const testUrl = process.env.TEST_DATABASE_URL;
 const schema = `audit_${randomUUID().replaceAll('-', '')}`;
@@ -34,6 +35,53 @@ function config(name: string): Config {
   return { host: '127.0.0.1', port: 4199, dataMode: 'postgres', logLevel: 'silent', staticDir: directory,
     managedRoot: join(directory, name, 'uploads'), workRoot: join(directory, name, 'work') };
 }
+
+test('storage worker releases its pool connection when advisory lock acquisition fails', async () => {
+  let released = 0;
+  let destroyed = false;
+  const failure = new Error('Connection lost before lock acquisition');
+  const client = { query: async () => { throw failure; }, release: (destroy: boolean) => { released++; destroyed = destroy; } };
+  const failedPool = { connect: async () => client } as unknown as pg.Pool;
+  const jobs = new StorageJobs(undefined as unknown as FileRegistry, failedPool);
+  await assert.rejects(jobs.start('test', {}, async () => undefined), error => error === failure);
+  assert.equal(released, 1, 'A failed lock query must not leak the pool lease');
+  assert.equal(destroyed, true, 'An uncertain lock must not return its session to the pool');
+});
+
+test('cancelled file verification leaves the existing integrity status unchanged', { skip: !testUrl }, async () => {
+  const settings = config('verify-cancellation');
+  const service = new StorageService(settings); await service.init();
+  await writeFile(join(service.managedRoot, 'cancel.stl'), 'local verification fixture');
+  const file = await registerFile(pool, service, 'DONARIUM_UPLOADS', 'cancel.stl');
+  const registry = new FileRegistry(pool, service); await registry.verify(file.id);
+  const before = (await pool.query('SELECT * FROM storage_files WHERE id=$1', [file.id])).rows[0];
+  const cancelled = new StorageError('Operation interrupted', 503);
+  let cancelledDuringHash = false;
+  const hash = service.hash.bind(service);
+  service.hash = async (key, path, check) => { cancelledDuringHash = true; return hash(key, path, check); };
+  await assert.rejects(registry.verify(file.id, true, () => { if (cancelledDuringHash) throw cancelled; }), error => error === cancelled);
+  assert.deepEqual((await pool.query('SELECT * FROM storage_files WHERE id=$1', [file.id])).rows[0], before);
+});
+
+test('folder import recognizes the same MAX, TAR and GZ model packages as the figure picker', { skip: !testUrl }, async () => {
+  const settings = config('import-formats');
+  const service = new StorageService(settings); await service.init();
+  for (const extension of ['max', 'tar', 'gz']) {
+    await mkdir(join(service.managedRoot, extension));
+    await writeFile(join(service.managedRoot, extension, `model.${extension}`), 'format fixture');
+  }
+  const imports = new FolderImports(service, pool);
+  try {
+    const id = await imports.scan('DONARIUM_UPLOADS', '');
+    for (let n = 0; n < 100 && imports.get(id).status === 'scanning'; n++) await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal(imports.get(id).status, 'preview');
+    assert.deepEqual(imports.get(id).items.map(item => item.path).sort(), ['gz', 'max', 'tar']);
+    imports.confirm(id, ['gz', 'max', 'tar']);
+    for (let n = 0; n < 100 && imports.get(id).status === 'importing'; n++) await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal(imports.get(id).report?.created, 3);
+    assert.equal(imports.get(id).report?.errors, 0);
+  } finally { await imports.close(); }
+});
 test('extension-free matching handles models and sources and keeps duplicates ambiguous', () => {
   for(const name of ['Лиса.STL','Лиса.3mf','Лиса.blend','Лиса.tar.gz'])assert.equal(chooseMatches('Лиса',[{id:'test',name}]).method,'stem',name);
   const duplicate=chooseMatches('Лиса',[{id:'a',name:'Лиса.stl'},{id:'b',name:'Лиса.STL'}]);

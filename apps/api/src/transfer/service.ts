@@ -1,5 +1,5 @@
 import { randomUUID, createHash } from 'node:crypto';
-import { createReadStream, createWriteStream } from 'node:fs';
+import { createWriteStream } from 'node:fs';
 import { mkdir, rename, rm, writeFile, readdir, readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { once } from 'node:events';
@@ -46,7 +46,7 @@ export class TransferService {
   private writes = new Map<string, Promise<void>>();
   readonly storage: StorageService;
   readonly transferLimit: number;
-  constructor(private pool: Pool, private config: Config) { this.storage = new StorageService(config); this.transferLimit=Math.min(config.maxArchiveBytes??4*1024**3,4*1024**3); }
+  constructor(private pool: Pool, config: Config) { this.storage = new StorageService(config); this.transferLimit=Math.min(config.maxArchiveBytes??4*1024**3,4*1024**3); }
   async init() {
     await this.storage.init();
     for (const name of await readdir(this.storage.workRoot)) {

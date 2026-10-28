@@ -125,7 +125,7 @@ export class PostgresRepository implements CatalogRepository {
       if (existing.rowCount !== categoryIds.length) throw new CatalogInputError('Категория не найдена');
     }
     if (input.coverAssetId) {
-      const cover = await client.query('SELECT id FROM assets WHERE id=$1 AND product_id=$2 AND kind=\'image\'', [input.coverAssetId, id]);
+      const cover = await client.query('SELECT id FROM assets WHERE id=$1 AND product_id=$2 AND kind=\'image\' AND retired_at IS NULL', [input.coverAssetId, id]);
       if (!cover.rowCount) throw new CatalogInputError('Изображение не принадлежит карточке');
     }
     await client.query('DELETE FROM product_categories WHERE product_id=$1', [id]);
@@ -168,8 +168,4 @@ export class PostgresRepository implements CatalogRepository {
     const result = await this.pool.query('DELETE FROM products WHERE id=$1', [id]);
     return !!result.rowCount;
   }
-}
-
-export function createPostgresRepository(pool: Pool): CatalogRepository {
-  return new PostgresRepository(pool);
 }

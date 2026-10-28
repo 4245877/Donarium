@@ -147,3 +147,21 @@ test('figure search and preview enforce result and byte limits', { skip: !testUr
     assert.equal((await app.inject({ url, headers: headers() })).statusCode, 403);
   }
 });
+
+test('replacing or detaching a figure preserves an attachment which existed before selection', { skip: !testUrl }, async () => {
+  const created = await call('POST', '/api/v1/products', { title: 'Existing attachment' });
+  const url = `/api/v1/products/${created.json().item.id}`;
+  await call('POST', `${url}/assets/link`, { root: 'MODELS', paths: [reference.path] });
+  const before = (await pool.query('SELECT * FROM assets WHERE product_id=$1', [created.json().item.id])).rows[0];
+  await call('PUT', url, { title: 'Selected', figureFile: reference });
+  await call('PUT', url, { title: 'Selected again', figureFile: reference });
+  const replaced = await call('PUT', url, { title: 'Replacement', figureFile: { root: 'MODELS', path: 'replacement.rar' } });
+  assert.equal(replaced.statusCode, 200, replaced.body);
+  assert.ok(replaced.json().item.assets.some((asset: { id: string }) => asset.id === before.id), 'The original attachment must survive replacement of its figure role');
+  assert.deepEqual((await pool.query('SELECT * FROM assets WHERE id=$1', [before.id])).rows[0], before);
+  await call('PUT', url, { title: 'Select original again', figureFile: reference });
+  const detached = await call('PUT', url, { title: 'Clear figure role', figureFile: null });
+  assert.equal(detached.json().item.figureFile, null);
+  assert.deepEqual((await pool.query('SELECT * FROM assets WHERE id=$1', [before.id])).rows[0], before);
+  assert.equal(await readFile(join(library, reference.path), 'utf8'), stl);
+});

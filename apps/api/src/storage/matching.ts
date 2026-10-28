@@ -1,4 +1,4 @@
-import { basename, extname } from 'node:path';
+import { extname } from 'node:path';
 import type { Pool } from 'pg';
 import { attachFile, getFile } from './registry.js';
 import { StorageError, fileMetadata } from './service.js';

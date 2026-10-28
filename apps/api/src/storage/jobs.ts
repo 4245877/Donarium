@@ -20,16 +20,26 @@ export class StorageJobs {
   async start(kind:string,parameters:Record<string,unknown>,work:(id:string,client:PoolClient)=>Promise<unknown>) {
     if(this.closing) throw new StorageError('Приложение завершает работу',503);
     const client=await this.pool.connect();
-    if(!(await client.query("SELECT pg_try_advisory_lock(hashtext('donarium_storage_worker')) AS locked")).rows[0].locked) { client.release();throw new StorageError('Операция с библиотекой уже выполняется',409); }
+    let locked: boolean;
+    try { locked=(await client.query("SELECT pg_try_advisory_lock(hashtext('donarium_storage_worker')) AS locked")).rows[0].locked; }
+    catch(error) { client.release(true);throw error; }
+    if(!locked) { client.release();throw new StorageError('Операция с библиотекой уже выполняется',409); }
+    const release = async () => {
+      let failed = false;
+      try { await client.query("SELECT pg_advisory_unlock(hashtext('donarium_storage_worker'))"); }
+      catch { failed = true; }
+      // An uncertain unlock must close the session, never return a held lock to the pool.
+      client.release(failed);
+    };
     let id:string;
     try {
       await client.query(`UPDATE storage_operations SET status='interrupted',error='Процесс прерван; повторите операцию',updated_at=now() WHERE status='running'`);
       id=(await client.query(`INSERT INTO storage_operations(kind,parameters) VALUES($1,$2) RETURNING id`,[kind,parameters])).rows[0].id;
-    } catch(error) { await client.query("SELECT pg_advisory_unlock(hashtext('donarium_storage_worker'))");client.release();throw error; }
+    } catch(error) { await release();throw error; }
     const task=(async()=> {
       try { const result=await work(id,client); await client.query(`UPDATE storage_operations SET status='completed',result=$2,updated_at=now() WHERE id=$1`,[id,JSON.stringify(result??{})]); }
       catch(error) { await client.query(`UPDATE storage_operations SET status=$2,error=$3,updated_at=now() WHERE id=$1`,[id,this.closing?'interrupted':'failed',error instanceof StorageError?error.message:'Операция прервана; данные сохранены, повторите проверку']).catch(()=>undefined); }
-      finally { await client.query("SELECT pg_advisory_unlock(hashtext('donarium_storage_worker'))").catch(()=>undefined);client.release(); }
+      finally { await release(); }
     })();this.tasks.add(task);void task.finally(()=>this.tasks.delete(task));return {jobId:id};
   }
   check() { if(this.closing) throw new StorageError('Операция прервана перезапуском',503); }

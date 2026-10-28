@@ -126,6 +126,7 @@ export class FileRegistry {
     return {items,total,page:query.page,pageSize:query.pageSize};
   }
   async verify(id:string,hash=true,check:()=>void=()=>undefined) {
+    check();
     const file=await getFile(this.pool,id);
     let status=!hash&&file.status==='corrupt'?'corrupt':!hash&&!file.sha256?'unverified':'available', checksum=file.sha256, size=file.size_bytes;
     try {
@@ -133,7 +134,8 @@ export class FileRegistry {
       if(hash) checksum=await this.service.hash(file.storage_key,file.relative_path,check);
       if((size!==null&&size!==actualSize)||(file.sha256&&hash&&file.sha256!==checksum)) status='corrupt';
       else size=actualSize;
-    } catch(error) { status=error instanceof StorageError&&error.statusCode===404?'missing':'unavailable'; }
+    } catch(error) { check();status=error instanceof StorageError&&error.statusCode===404?'missing':'unavailable'; }
+    check();
     await this.pool.query(`UPDATE storage_files SET status=$2,checked_at=now(),size_bytes=coalesce(size_bytes,$3),sha256=CASE WHEN $2='available' THEN coalesce(sha256,$4) ELSE sha256 END,verified_at=CASE WHEN $2='available' AND $5 THEN now() ELSE verified_at END WHERE id=$1`,[id,status,size,checksum,hash]);
     return {id,status};
   }

@@ -2,8 +2,9 @@ import { basename, extname } from 'node:path';
 import { readdir } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import type { Pool, PoolClient } from 'pg';
+import { FIGURE_FILE_EXTENSIONS } from '@donarium/shared';
 import { fileMetadata, safeRelativePath, StorageError, StorageService } from './service.js';
-import { registerFile } from './registry.js';
+import { location as storageId, registerFile } from './registry.js';
 
 export interface FolderCandidate {
   path: string; title: string; files: number; cover: string | null; existingProductId: string | null;
@@ -15,16 +16,10 @@ export interface ImportJob {
   report?: { created: number; updated: number; skipped: number; errors: number };
   visited: number; createdAt: number;
 }
-const modelExtensions = new Set(['.stl', '.3mf', '.obj', '.step', '.stp', '.ply', '.amf', '.glb', '.gltf', '.fbx', '.zip', '.rar', '.7z', '.blend', '.f3d', '.scad']);
+const modelExtensions = new Set(FIGURE_FILE_EXTENSIONS.map(extension => `.${extension}`));
 const supportedExtensions = new Set([...modelExtensions, '.jpg', '.jpeg', '.png', '.webp', '.gif', '.avif', '.pdf', '.txt', '.md', '.docx', '.xlsx', '.ini', '.gcode', '.cfg']);
 export function supportedFile(path: string) { return supportedExtensions.has(extname(path).toLowerCase()); }
 
-export async function storageId(pool: Pick<Pool, 'query'>, service: StorageService, key: string) {
-  const root = service.root(key);
-  const result = await pool.query<{ id: string }>(`INSERT INTO storage_locations(key,name,kind) VALUES ($1,$2,'local')
-    ON CONFLICT(key) DO UPDATE SET name=EXCLUDED.name RETURNING id`, [root.key, root.name]);
-  return result.rows[0]!.id;
-}
 export async function linkFile(client: Pick<PoolClient, 'query'>, service: StorageService, productId: string,
   key: string, path: string, origin = 'external', checksum: string | null = null) {
   await client.query('SELECT id FROM products WHERE id=$1 FOR UPDATE',[productId]);

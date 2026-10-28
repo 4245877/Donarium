@@ -11,5 +11,3 @@ export function createPool(databaseUrl: string): pg.Pool {
     application_name: 'donarium',
   });
 }
-
-export const createDatabase = createPool;

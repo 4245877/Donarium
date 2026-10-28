@@ -226,7 +226,9 @@ export class StorageService {
   }
   async discardStage(path: string) {
     if (!/^\.staging\/[0-9a-f-]{36}$/.test(path)) throw new StorageError('Недопустимая временная загрузка');
-    const folder = await this.open('DONARIUM_UPLOADS','.staging',true);
+    let folder:Awaited<ReturnType<StorageService['open']>>;
+    try {folder=await this.open('DONARIUM_UPLOADS','.staging',true);}
+    catch(error) {if(error instanceof StorageError&&error.statusCode===404)return;throw error;}
     try { await unlink(join(process.platform==='linux'?`/proc/self/fd/${folder.handle.fd}`:folder.path,basename(path))).catch(error => { if(error.code!=='ENOENT') throw error; }); }
     finally { await folder.handle.close(); }
   }

@@ -101,10 +101,12 @@ export class TransferService {
     if (this.busy) throw new TransferError('Дождитесь завершения текущего переноса', 409);
     if (this.jobs.size >= 100) throw new TransferError('Удалите завершённые операции переноса', 409);
     this.busy = true;
-    await this.storage.assertPath(this.storage.workRoot);
-    await this.storage.assertPath(this.storage.managedRoot);
     const id = randomUUID(), directory = join(this.storage.workRoot, `transfer-${id}`);
-    try { await mkdir(directory, { mode: 0o700 }); }
+    try {
+      await this.storage.assertPath(this.storage.workRoot);
+      await this.storage.assertPath(this.storage.managedRoot);
+      await mkdir(directory, { mode: 0o700 });
+    }
     catch (error) { this.busy = false; throw error; }
     const job: InternalJob = { id, kind, status, progress: 0, createdAt: new Date().toISOString(), directory };
     this.jobs.set(id, job);
@@ -204,8 +206,14 @@ export class TransferService {
   private async archive(job: InternalJob) {
     const client = await this.pool.connect();
     const zip = new yazl.ZipFile();
+    const activeStreams=new Set<Readable>();
+    (zip.outputStream as Readable).once('close',()=>{for(const stream of activeStreams)stream.destroy();});
     zip.on('error', error => (zip.outputStream as Readable).destroy(error));
-    const output = pipeline(zip.outputStream, createWriteStream(join(job.directory, 'archive.zip'), { flags: 'wx', mode: 0o600 }));
+    let outputBytes=0,originalBytes=0;
+    const output = pipeline(zip.outputStream, new Transform({transform:(chunk:Buffer,_encoding,done)=> {
+      outputBytes+=chunk.length;
+      done(outputBytes>this.transferLimit?new TransferError('Архив превышает допустимый размер',413):null,chunk);
+    }}), createWriteStream(join(job.directory, 'archive.zip'), { flags: 'wx', mode: 0o600 }));
     // Attach a rejection handler immediately; preparation can fail before awaiting output.
     let outputError: unknown; void output.catch(error => { outputError = error; });
     try {
@@ -225,6 +233,8 @@ export class TransferService {
               row.archive_path=null;
               if(manifest.fileMode==='files') {
                 const opened=await this.storage.open(row.storage_key,row.relative_path);const size=String(opened.stat.size);await opened.handle.close();
+                originalBytes+=Number(size);
+                if(!Number.isSafeInteger(originalBytes)||originalBytes>this.transferLimit)throw new TransferError('Архив превышает допустимый размер; используйте экспорт метаданных',413);
                 const hash=await this.storage.hash(row.storage_key,row.relative_path,()=>this.check(job));
                 if(row.size_bytes!==null&&size!==row.size_bytes||row.sha256&&hash!==row.sha256)throw new TransferError('Нарушена целостность оригинала; экспорт остановлен');
                 row.size_bytes=size;row.sha256=hash;row.status='available';row.verified_at=new Date().toISOString();
@@ -232,7 +242,9 @@ export class TransferService {
                 const key=row.storage_key,path=row.relative_path,expected=hash;
                 zip.addReadStreamLazy(row.archive_path,{compress:false,size:Number(size),forceZip64Format:true},callback=> {
                   void this.storage.readStream(key,path).then(file=> {
+                    if((zip.outputStream as Readable).destroyed){file.stream.destroy();callback(new TransferError('Экспорт прерван'),null as unknown as Readable);return;}
                     const digest=createHash('sha256');const verifier=new Transform({transform:(chunk:Buffer,_enc,done)=>{try{this.check(job);digest.update(chunk);done(null,chunk);}catch(error){done(error as Error);}},flush(done){done(digest.digest('hex')===expected?undefined:new TransferError('Оригинал изменился во время экспорта'));}});
+                    activeStreams.add(verifier);verifier.once('close',()=>activeStreams.delete(verifier));
                     file.stream.on('error',error=>verifier.destroy(error));verifier.on('close',()=>file.stream.destroy());file.stream.pipe(verifier);callback(null,verifier);
                   }).catch(error=>callback(error,null as unknown as Readable));
                 });
@@ -253,13 +265,13 @@ export class TransferService {
   }
   private async restore(job: InternalJob, conflict: 'skip' | 'copy') {
     const stage = this.staging(job.id), destination = join(this.storage.managedRoot, 'restored', job.id);
-    const client = await this.pool.connect(); let moved = false, committed = false;
-    await this.storage.assertPath(this.storage.managedRoot);
+    const client = await this.pool.connect(); let moved = false, committed = false, commitAttempted = false;
     const newCategoryIds = new Set<string>();
     const fileIds = new Map<string,string>();
     const productIds = new Map<string, string>(), categoryIds = new Map<string, string>(), tagIds = new Map<string, string>(), assetIds = new Map<string, string>();
     let skipped = 0, copied = 0;
     try {
+      await this.storage.assertPath(this.storage.managedRoot);
       await client.query('BEGIN');
       await client.query("SELECT pg_advisory_xact_lock(hashtext('donarium_restore'))");
       const storage = await client.query<{ id: string }>(`INSERT INTO storage_locations(key,name,kind) VALUES('DONARIUM_UPLOADS','Загрузки DONARIUM','local') ON CONFLICT(key) DO UPDATE SET name=EXCLUDED.name RETURNING id`);
@@ -349,11 +361,29 @@ export class TransferService {
       }
       if(job.manifest?.version===2) {
         for await(const row of rows(join(stage,'storage_operations.ndjson')))await client.query(`INSERT INTO storage_operations(id,kind,status,progress,total,parameters,result,error,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(id) DO NOTHING`,[row.id,row.kind,row.status==='running'?'interrupted':row.status,row.progress,row.total,row.parameters,row.result,row.error,row.created_at,row.updated_at]);
+        // Remap physical identities without replacing historical values with today's
+        // asset rows: doing so would erase rollback's detection of later user edits.
+        const translateSnapshot=async(snapshot:Row|null,product:string):Promise<Row|null>=> {
+          if(!snapshot)return null;
+          const assets:Row[]=[];
+          for(const original of snapshot.assets) {
+            const a={...original,id:assetIds.get(original.id)??original.id,product_id:product};
+            if(a.file_id) {
+              a.file_id=fileIds.get(a.file_id)??a.file_id;
+              const file=(await client.query('SELECT storage_id,relative_path,size_bytes::text,sha256 FROM storage_files WHERE id=$1',[a.file_id])).rows[0];
+              // These four fields are registry mirrors rewritten by the asset trigger
+              // on restore; normalize them while preserving user-editable history.
+              if(file)Object.assign(a,file);
+            }
+            assets.push(a);
+          }
+          return {...snapshot,description:translateUrls(snapshot.description),assets,
+            ...(snapshot.newAsset?{newAsset:assetIds.get(snapshot.newAsset)??snapshot.newAsset}:{})};
+        };
         for await(const row of rows(join(stage,'storage_matches.ndjson'))) {
           const product=productIds.get(row.product_id);if(!product)continue;
-          const snapshot={...row.snapshot,description:translateUrls(row.snapshot.description),assets:(row.snapshot.assets??[]).map((a:Row)=>({...a,id:assetIds.get(a.id)??a.id,product_id:product}))};
-          const after=row.applied_snapshot?{...row.applied_snapshot,description:translateUrls(row.applied_snapshot.description),newAsset:row.applied_snapshot.newAsset?assetIds.get(row.applied_snapshot.newAsset):null}:null;
-          if(after) {const ids=row.applied_snapshot.assets.map((a:Row)=>assetIds.get(a.id));after.assets=(await client.query('SELECT * FROM assets WHERE id=ANY($1::uuid[]) ORDER BY created_at,id',[ids])).rows;}
+          const snapshot=await translateSnapshot(row.snapshot,product);
+          const after=await translateSnapshot(row.applied_snapshot,product);
           const id=product===row.product_id?row.id:randomUUID();
           await client.query(`INSERT INTO storage_matches(id,product_id,file_id,method,source_name,candidates,status,snapshot,applied_snapshot,operation_id,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT DO NOTHING`,[id,product,row.file_id?fileIds.get(row.file_id):null,row.method,row.source_name,JSON.stringify(row.candidates.map((id:string)=>fileIds.get(id)??id)),row.status,snapshot,after,row.operation_id,row.updated_at]);
         }
@@ -366,19 +396,20 @@ export class TransferService {
       if ((assetIds.size || fileIds.size) && (await stat(join(stage, 'files')).catch(() => undefined))?.isDirectory() && (await readdir(join(stage,'files'))).length>0) { await mkdir(join(this.storage.managedRoot, 'restored'), { recursive: true, mode: 0o700 }); await rename(join(stage, 'files'), destination); moved = true; }
       const result = { imported: productIds.size, skipped, copied, assets: assetIds.size, files:fileIds.size, fileAliases:Object.fromEntries([...fileIds].filter(([old,id])=>old!==id)) };
       await client.query('INSERT INTO transfer_receipts(id,result) VALUES($1,$2)', [job.id, result]);
+      commitAttempted = true;
       await client.query('COMMIT'); committed = true;
       job.result = result;
     } catch (error) {
       await client.query('ROLLBACK').catch(() => undefined);
-      if (moved && !committed) {
+      if ((moved || commitAttempted) && !committed) {
         // COMMIT may have reached PostgreSQL even when its response was lost.
         // Query the durable receipt on a new connection before moving any bytes back.
         const receipt = await this.pool.query('SELECT result FROM transfer_receipts WHERE id=$1', [job.id]).catch(() => undefined);
-        if (receipt?.rowCount) { committed = true; job.result = receipt.rows[0].result; return; }
-        if (receipt) await rename(destination, join(stage, 'files')).catch(() => undefined);
+        if (receipt?.rowCount) { committed = true; job.result = receipt.rows[0].result; }
+        else if (receipt) { if(moved) await rename(destination, join(stage, 'files')).catch(() => undefined); }
         else throw new TransferError('БД недоступна: результат COMMIT пока неизвестен. Файлы сохранены; перезапустите приложение после восстановления БД');
       }
-      throw error;
+      if(!committed)throw error;
     } finally { client.release(); }
     await rm(stage, { recursive: true, force: true }).catch(() => undefined);
     await rm(join(job.directory, 'upload.zip'), { force: true }).catch(() => undefined);

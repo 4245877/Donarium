@@ -1,5 +1,7 @@
 # DONARIUM
 
+Независимый аудит 28.10.2026: [подтверждённые ошибки, исправления и ограничения](docs/INDEPENDENT_AUDIT_2026-10-28.md). Исправления подготовлены в исходниках и отдельном образе; обновление рабочего сервиса выполняется в согласованное окно. Для обслуживания используйте `systemctl disable --now donarium.service`: обычный stop не защищает от будущего OnFailure NFS mount.
+
 Персональная self-hosted библиотека цифровых моделей и файлов: React + TypeScript, Fastify, PostgreSQL 16, файловое хранилище Ubuntu. Один владелец, один пароль, без регистрации и облачных сервисов.
 
 Рабочая установка: **http://192.168.0.151:4180** (LAN), **http://100.91.30.10:4180** (Tailscale). Рабочий каталог использует PostgreSQL и реальные импортированные товары; демонстрационные карточки в него не переносились. Пароль владельца находится в локальном `.env`, поле `ADMIN_PASSWORD`; файл имеет права `0600` и не входит в Git. Библиотека, загрузки и рабочие файлы расположены на HDD сервера .141 и подключены по NFS. Управление доступно в разделе «Файлы». Статус внедрения и проверки восстановления: [отчёт](docs/STORAGE_IMPLEMENTATION_REPORT.md).
@@ -115,18 +117,15 @@ PATH=/tmp/donarium-tools:$PATH npm run test:integration
 Браузерные проверки с настоящей тестовой БД:
 
 ```bash
-# Сначала подготовьте test:integration, затем в отдельном терминале:
-DONARIUM_TEST_ENV_FILE=/tmp/donarium-integration-env.json \
+# Node 22+, подготовленный test:integration и установленный Chromium:
+npm run build
+TEST_DATABASE_URL=postgresql://donarium_test@127.0.0.1:5549/donarium_test_source \
+  E2E_WRITE=donarium_test \
   E2E_PASSWORD=donarium-browser-test-password \
-  /tmp/donarium-tools/node --import tsx scripts/browser-test-server.ts
-# В другом терминале, с установленным Chromium:
-BASE_URL=http://127.0.0.1:4196 E2E_WRITE=donarium_test \
-  E2E_PASSWORD=donarium-browser-test-password \
-  PLAYWRIGHT_CHROMIUM_EXECUTABLE=/path/to/chrome \
-  PATH=/tmp/donarium-tools:$PATH npm run test:e2e
+  npm run test:e2e
 ```
 
-QA-сервер создаёт свою схему и временные корни; SIGINT очищает только их. [Результаты проверок](docs/VERIFICATION.md) · [Аудит и итог](docs/AUDIT_REPORT.md) · [Архитектура](ARCHITECTURE.md).
+Playwright сам запускает свежий QA-сервер на loopback:4196, создаёт схему и временные корни, затем очищает их через SIGTERM. Ручной сервер на этом порту перед прогоном нужно завершить; повторное использование исключено. Если нужен системный Chromium, задайте PLAYWRIGHT_CHROMIUM_EXECUTABLE. Write-сценарии запрещены для production URL. [Независимый аудит](docs/INDEPENDENT_AUDIT_2026-10-28.md) · [Прежние проверки](docs/VERIFICATION.md) · [Архитектура](ARCHITECTURE.md).
 
 ## Практические границы
 
@@ -141,4 +140,4 @@ QA-сервер создаёт свою схему и временные кор�
 
 Версия 0.3 добавляет независимый реестр, общий раздел «Файлы», повторное использование оригиналов, дедупликацию новых загрузок, контроль целостности, подтверждаемое сопоставление товаров и ZIP метаданных v2. В рабочей установке NFS включён через `compose.nfs.yml` и COMPOSE_FILE; приложение обслуживает Donarium 0.3.0. Порядок установки, проверок и отката: [локальное хранилище](docs/LOCAL_STORAGE.md). Фактическое состояние внедрения: [отчёт](docs/STORAGE_IMPLEMENTATION_REPORT.md).
 
-Финальная проверка 28 октября: 47 автоматических и 11 браузерных тестов, сохранность 598 товаров/2416 вложений/2427 файлов, восстановление свежих pg_dump и metadata ZIP. Recovery повторяет неудачные старты NFS; ручная остановка отменяет ожидающий retry. Для обслуживания при недоступном NFS используйте `systemctl disable --now donarium.service`, затем `enable --now`. Независимая копия всей библиотеки на другом носителе пока отсутствует.
+Независимая проверка 28 октября: 58 автоматических и 12 браузерных тестов, сохранность всех строк 14 рабочих таблиц, восстановление свежих pg_dump и metadata ZIP. Исправления ещё не развёрнуты в рабочем контейнере. Recovery повторяет неудачные старты NFS; обычный stop отменяет текущий retry, но не защищает от будущего OnFailure. Для обслуживания используйте `systemctl disable --now donarium.service`, затем `enable --now`. Независимая копия всей библиотеки на другом носителе пока не подтверждена.

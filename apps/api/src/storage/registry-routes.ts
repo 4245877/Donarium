@@ -88,7 +88,8 @@ export async function registerRegistryRoutes(app:FastifyInstance,pool:Pool,servi
     const where=`WHERE ($1::text IS NULL OR m.status=$1) AND ($2::text IS NULL OR m.method=$2) AND ($3::text IS NULL OR lower(p.title||' '||m.source_name) LIKE $3 ESCAPE '\\')`;
     const total=Number((await pool.query(`SELECT count(*) FROM storage_matches m JOIN products p ON p.id=m.product_id ${where}`,args)).rows[0].count);
     const items=(await pool.query(`SELECT m.*,p.title,f.name AS file_name,f.size_bytes::text,f.sha256,f.status AS file_status,
-      coalesce((SELECT jsonb_agg(jsonb_build_object('id',c.id,'name',c.name,'sha256',c.sha256,'size_bytes',c.size_bytes::text,'status',c.status)) FROM storage_files c WHERE m.candidates @> to_jsonb(ARRAY[c.id::text])),'[]') AS candidate_files
+      coalesce((SELECT jsonb_agg(jsonb_build_object('id',c.id,'name',c.name,'sha256',c.sha256,'size_bytes',c.size_bytes::text,'status',c.status) ORDER BY c.name,c.id)
+        FROM jsonb_array_elements_text(m.candidates) AS candidate(id) JOIN storage_files c ON c.id=candidate.id::uuid),'[]') AS candidate_files
       FROM storage_matches m JOIN products p ON p.id=m.product_id LEFT JOIN storage_files f ON f.id=m.file_id ${where} ORDER BY p.title,m.id LIMIT 50 OFFSET $4`,[...args,(q.page-1)*50])).rows;
     return {items,total,page:q.page,pageSize:50};
   });

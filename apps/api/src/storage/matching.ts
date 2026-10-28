@@ -1,13 +1,18 @@
 import { basename, extname } from 'node:path';
 import type { Pool } from 'pg';
 import { attachFile, getFile } from './registry.js';
-import { StorageError } from './service.js';
+import { StorageError, fileMetadata } from './service.js';
 import { StorageJobs } from './jobs.js';
 
 export const isDrive=(value:string|null)=> {try{return !!value && ['drive.google.com','docs.google.com'].includes(new URL(value).hostname);}catch{return false;}};
 const canonical=(value:any):string=>JSON.stringify(value,(_key,v)=>v&&typeof v==='object'&&!Array.isArray(v)?Object.fromEntries(Object.entries(v).sort(([a],[b])=>a.localeCompare(b))):v);
 const drivePattern=/https?:\/\/(?:drive|docs)\.google\.com\/[^\s<>"')]+/gi;
-export const stem=(name:string)=>name.replace(/\.(rar|zip|7z)$/i,'');
+// Photos and documents are independent resources, even when hosted on Drive.
+const modelLink=(asset:any)=>isDrive(asset.external_url)&&['archive','model','source'].includes(asset.kind);
+export const stem=(name:string)=> {
+  if(!['archive','model','source'].includes(fileMetadata(name).kind))return name;
+  return /\.tar\.gz$/i.test(name)?name.slice(0,-7):name.slice(0,-extname(name).length);
+};
 export const normalized=(name:string)=>stem(name).normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]/gu,'');
 export function chooseMatches(source:string,files:{id:string;name:string}[]) {
   if(!source.trim())return {method:'missing',candidates:[] as string[],fileId:null};
@@ -31,7 +36,7 @@ export class LibraryMatching {
         const source=[...names][0]??'';
         const match=chooseMatches(source,files);
         if(names.size>1) {const alternatives=[...names].map(n=>chooseMatches(n,files));const ids=new Set(alternatives.flatMap(m=>m.candidates));if(ids.size!==1||alternatives.some(m=>!m.fileId)) {match.method='ambiguous';match.fileId=null;match.candidates=[...ids];}}
-        const assets=(await client.query('SELECT * FROM assets WHERE product_id=$1 ORDER BY created_at,id',[p.id])).rows.filter(a=>isDrive(a.external_url));
+        const assets=(await client.query('SELECT * FROM assets WHERE product_id=$1 ORDER BY created_at,id',[p.id])).rows.filter(modelLink);
         const snapshot={source_url:p.source_url,description:p.description,assets};
         await client.query(`INSERT INTO storage_matches(product_id,file_id,method,source_name,candidates,snapshot,operation_id) VALUES($1,$2,$3,$4,$5,$6,$7)
           ON CONFLICT(product_id) DO UPDATE SET file_id=EXCLUDED.file_id,method=EXCLUDED.method,source_name=EXCLUDED.source_name,candidates=EXCLUDED.candidates,snapshot=EXCLUDED.snapshot,status='pending',operation_id=EXCLUDED.operation_id,updated_at=now()
@@ -68,16 +73,21 @@ export class LibraryMatching {
           if(p.source_url!==m.snapshot.source_url||p.description!==m.snapshot.description)throw new StorageError('Карточка изменена после предпросмотра; повторите сопоставление',409);
           const file=await getFile(tx,m.file_id);
           if(file.status!=='available'||!file.sha256)throw new StorageError('Файл не проверен или недоступен',409);
-          const oldAssets=(await tx.query('SELECT * FROM assets WHERE product_id=$1 ORDER BY created_at,id FOR UPDATE',[p.id])).rows.filter(a=>isDrive(a.external_url));
-          if(canonical(oldAssets)!==canonical(m.snapshot.assets))throw new StorageError('Вложения изменились после предпросмотра',409);
+          const allAssets=(await tx.query('SELECT * FROM assets WHERE product_id=$1 ORDER BY created_at,id FOR UPDATE',[p.id])).rows;
+          const oldAssets=allAssets.filter(modelLink);
+          // Older previews included every Drive link. Require a fresh preview rather than
+          // applying that unsafe selection or silently changing its snapshot.
+          if(canonical(oldAssets)!==canonical(m.snapshot.assets))throw new StorageError('Вложения изменились после предпросмотра; подготовьте соответствия заново',409);
+          if(new Set(oldAssets.map(a=>a.external_url)).size>1)throw new StorageError('В карточке несколько разных архивов Drive; уточните связи перед сопоставлением',409);
           const original=oldAssets[0];
           const linked=await attachFile(tx,this.jobs.registry.service,p.id,file.id,original?{replaceAssetId:original.id}:{});
-          await tx.query(`UPDATE assets SET metadata=metadata || jsonb_build_object('migration_origin',$2::jsonb) WHERE id=$1`,[linked.id,JSON.stringify({operation,original:original??null,sourceUrl:p.source_url,description:p.description})]);
+          if(original||linked.inserted)await tx.query(`UPDATE assets SET metadata=metadata || jsonb_build_object('migration_origin',$2::jsonb) WHERE id=$1`,[linked.id,JSON.stringify({operation,original:original??null,sourceUrl:p.source_url,description:p.description})]);
           for(const old of oldAssets.slice(1))await tx.query('UPDATE assets SET retired_at=now() WHERE id=$1',[old.id]);
-          const description=p.description.replace(drivePattern,`/api/v1/assets/${linked.id}/download`);
+          const migratedUrls=new Set([...(isDrive(p.source_url)?[p.source_url]:[]),...oldAssets.map(a=>a.external_url)]);
+          const description=p.description.replace(drivePattern,(url:string)=>migratedUrls.has(url)?`/api/v1/assets/${linked.id}/download`:url);
           await tx.query('UPDATE products SET source_url=$2,description=$3 WHERE id=$1',[p.id,isDrive(p.source_url)?null:p.source_url,description]);
           const afterAssets=(await tx.query('SELECT * FROM assets WHERE id=ANY($1::uuid[]) ORDER BY created_at,id',[[linked.id,...oldAssets.slice(1).map(a=>a.id)]])).rows;
-          const after={source_url:isDrive(p.source_url)?null:p.source_url,description,assets:afterAssets,newAsset:original?null:linked.id};
+          const after={source_url:isDrive(p.source_url)?null:p.source_url,description,assets:afterAssets,newAsset:!original&&linked.inserted?linked.id:null};
           await tx.query(`UPDATE storage_matches SET status='applied',applied_snapshot=$2,operation_id=$3,updated_at=now() WHERE id=$1`,[id,after,operation]);
           await tx.query(`INSERT INTO storage_events(operation_id,file_id,product_id,action,details) VALUES($1,$2,$3,'migrate',$4)`,[operation,file.id,p.id,JSON.stringify({matchId:id,assetId:linked.id})]);applied++;
         });}catch(error){errors.push({id,message:error instanceof StorageError?error.message:'Ошибка применения; транзакция отменена'});}

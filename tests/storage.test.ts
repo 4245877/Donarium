@@ -71,6 +71,14 @@ test('oversize upload is rejected and partial content is removed', async () => {
   for (const folder of await readdir(service.managedRoot)) assert.ok(!(await readdir(join(service.managedRoot, folder))).includes('too-large.stl'));
 });
 
+test('discarding a never-created upload stage is safe and does not create a directory', async () => {
+  const uploads=join(temporary,'never-started-uploads');
+  const empty=new StorageService({managedRoot:uploads,workRoot:join(temporary,'never-started-work')});
+  await empty.init();
+  await empty.discardStage('.staging/00000000-0000-4000-8000-000000000001');
+  assert.deepEqual(await readdir(uploads),[]);
+});
+
 test('folder scan creates a bounded preview, detects nested files and never modifies originals', async () => {
   await mkdir(join(original, 'Anime', 'Honolulu'), { recursive: true });
   await writeFile(join(original, 'Anime', 'Honolulu', 'model.3mf'), 'test model');

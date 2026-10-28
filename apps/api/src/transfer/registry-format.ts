@@ -47,8 +47,10 @@ export async function validateRegistryArchive(directory:string,entries:Set<strin
       if(row.candidates.some((id:string)=>!files.has(id)))throw new TransferError('Потерян кандидат сопоставления');
       for(const snapshot of [row.snapshot,row.applied_snapshot].filter(Boolean)) {
         if(!(snapshot.source_url===null||typeof snapshot.source_url==='string'&&/^https?:\/\//.test(snapshot.source_url))||typeof snapshot.description!=='string'||snapshot.description.length>100000||!Array.isArray(snapshot.assets)||snapshot.assets.length>10000)throw new TransferError('Недопустимый снимок миграции');
-        for(const a of snapshot.assets) {validateRow('assets',a,true);if(a.product_id!==row.product_id||assets.get(a.id)?.product_id!==row.product_id)throw new TransferError('Снимок ссылается на чужое вложение');}
-        if(snapshot.newAsset&&(!uuid(snapshot.newAsset)||assets.get(snapshot.newAsset)?.product_id!==row.product_id))throw new TransferError('Потерян UUID созданного вложения');
+        // A historical attachment may have been deliberately detached. History remains
+        // portable; rollback will reject a missing/changed live attachment separately.
+        for(const a of snapshot.assets) {validateRow('assets',a,true);if(a.product_id!==row.product_id||(assets.has(a.id)&&assets.get(a.id)!.product_id!==row.product_id))throw new TransferError('Снимок ссылается на чужое вложение');}
+        if(snapshot.newAsset&&(!uuid(snapshot.newAsset)||(assets.has(snapshot.newAsset)&&assets.get(snapshot.newAsset)!.product_id!==row.product_id)||!snapshot.assets.some((a:Row)=>a.id===snapshot.newAsset)))throw new TransferError('Потерян UUID созданного вложения');
       }
     }
     if(['storage_matches','storage_events'].includes(table)&&row.operation_id&&!ids.get('storage_operations')!.has(row.operation_id))throw new TransferError('Потеряна связь журнала');
